@@ -249,6 +249,15 @@ def _tier(title: str, body: str = "", diff_versions: tuple[str, str] | None = No
     priority over title/body text parsing, which only ever sees what the bot
     chose to write in prose and can't tell tiers apart when the title states
     just the target version.
+
+    Every branch that can return "major" here is backed by an explicit
+    breaking-change signal, an explicit old/new version pair (from a diff,
+    the title, or the body), or an explicit module-path change — all high
+    confidence. The one exception is the trailing "0.x target with no known
+    source version" guess, which returns "major_unconfirmed" instead: major
+    bumps are now acted on solo with no batching threshold to absorb a wrong
+    guess, so a single low-confidence guess must not be enough to trigger a
+    live consolidation run on its own.
     """
     title_lower = title.lower()
     if re.search(r"(?:^|[\s(:])[^\s:]+!:", title_lower) or "breaking" in title_lower:
@@ -277,12 +286,14 @@ def _tier(title: str, body: str = "", diff_versions: tuple[str, str] | None = No
         if tier:
             return tier
 
-    # 0.x target bumps are breaking by project policy. Other target-only
-    # versions are unknown because no source version could be determined
-    # from the title or body.
+    # 0.x target bumps are breaking by project policy, but with no source
+    # version to confirm it against, this is a guess, not a fact — see the
+    # confidence note in the docstring above. Other target-only versions are
+    # unknown because no source version could be determined from the title
+    # or body.
     target_versions = [_version(value) for value in versions]
     if target_versions and target_versions[-1] and target_versions[-1][0] == 0:
-        return "major"
+        return "major_unconfirmed"
     return "unknown"
 
 

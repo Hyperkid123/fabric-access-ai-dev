@@ -29,20 +29,36 @@ def cycle_39829():
 
 
 def test_non_major_prs_in_a_repo_dont_block_the_solo_major_pr(cycle_39829):
-    """Each repo in this fixture has one major-tier PR (a 0.x bump / a Go
-    module path bump) alongside an unrelated non-major PR (an unknown-tier
-    version bump / a digest bump). The non-major PR must not block or get
-    folded into the major PR's group — the major PR forms its own solo group
-    and the non-major PR is simply dropped.
+    """insights-rbac has a 0.x-target-only PR (app-common-python) alongside an
+    unrelated unknown-tier PR (django) — neither is actionable, since the
+    0.x-target guess has no source version to confirm it against (see
+    test_unconfirmed_0x_target_major_is_excluded) and django never resolves
+    past "unknown". entitlements-api-go has a confidently-classified major
+    (an explicit Go module path bump, v4 -> v7, stated directly in the title)
+    alongside an unrelated patch-tier digest bump. The digest bump must not
+    block or get folded into the major PR's group — the major PR forms its
+    own solo group and the digest bump is simply dropped.
     """
     insights_rbac, entitlements_api_go = cycle_39829["repos"]
 
-    assert check_bot_prs._consolidatable_groups(insights_rbac["prs"]) == [
-        {"ecosystem": "python", "tier": "major", "prs": [insights_rbac["prs"][0]]}
-    ]
+    assert check_bot_prs._consolidatable_groups(insights_rbac["prs"]) == []
     assert check_bot_prs._consolidatable_groups(entitlements_api_go["prs"]) == [
         {"ecosystem": "go", "tier": "major", "prs": [entitlements_api_go["prs"][1]]}
     ]
+
+
+def test_unconfirmed_0x_target_major_is_excluded():
+    """A title that only states a 0.x target version, with no source version
+    available from a diff, title, or body, is a guess that the bump is
+    breaking (per 0.x semver convention) — not a fact. Since major bumps now
+    run solo with no batching threshold to absorb a wrong guess, this
+    low-confidence case must not be actionable on its own, unlike a diff- or
+    version-pair-confirmed major.
+    """
+    prs = [{"title": "chore(deps): update dependency app-common-python to v0.3.0"}]
+
+    assert check_bot_prs._tier(prs[0]["title"]) == "major_unconfirmed"
+    assert check_bot_prs._consolidatable_groups(prs) == []
 
 
 def test_patch_only_prs_are_excluded():
@@ -152,9 +168,12 @@ def test_date_suffixed_stub_package_patch_versions_are_excluded():
 
 
 def test_cycle_39829_emits_start_with_solo_major_groups(cycle_39829, monkeypatch, capsys):
-    """Each repo in this fixture has exactly one major-tier PR. Since major
-    bumps are handled solo (no 2+ threshold), the preflight should start a
-    run with one single-PR major group per repo, rather than skipping.
+    """Only entitlements-api-go's confidently-classified major (an explicit
+    Go module path bump stated in the title) is actionable — insights-rbac's
+    only major-looking PR is the low-confidence 0.x-target-only guess, which
+    is excluded (see test_unconfirmed_0x_target_major_is_excluded). Since
+    major bumps are handled solo (no 2+ threshold), a single confident major
+    is enough to start a run.
     """
     repo_by_name = {repo["repo"]: repo for repo in cycle_39829["repos"]}
     repos = {name: {"url": data["bot_url"], "upstream": data["repo"]} for name, data in repo_by_name.items()}
@@ -175,10 +194,9 @@ def test_cycle_39829_emits_start_with_solo_major_groups(cycle_39829, monkeypatch
 
     assert output["status"] == cycle_39829["expected"]["status"]
     content = json.loads(output["content"])
+    repos_in_output = {repo["repo"] for repo in content["repos"]}
+    assert repos_in_output == {"RedHatInsights/entitlements-api-go"}
     groups_by_repo = {repo["repo"]: repo["groups"] for repo in content["repos"]}
-    assert groups_by_repo["project-kessel/insights-rbac"] == [
-        {"ecosystem": "python", "tier": "major", "pr_count": 1}
-    ]
     assert groups_by_repo["RedHatInsights/entitlements-api-go"] == [
         {"ecosystem": "go", "tier": "major", "pr_count": 1}
     ]

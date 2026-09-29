@@ -67,6 +67,12 @@ This workflow only consolidates **major-tier** bumps. The script does **not** di
 
 **Every PR the preflight hands you should already be major tier — verify this before invoking the script, for every run, regardless of what CI outcome you expect.** A major bump can pass CI while still being wrong (e.g. a deprecated-but-still-compiling API silently misbehaving) — see **Handling a detected major bump** below. If you find a PR in the preflight's output that doesn't actually look major-tier on inspection, treat that as a suspected misclassification (see **Agent Responsibilities** below) rather than proceeding with it.
 
+### Confidence required for solo action
+
+Because a single major-tier PR is now enough to trigger a live consolidation run (no 2+ threshold to absorb a wrong guess — see **Grouping by tier** below), the preflight only treats a PR as actionable "major" when the classification is backed by an explicit signal: a real manifest diff, an explicit old→new version pair (from the title, the PR body's changelog table, or a Go module-path change like `.../v2` → `.../v3`), or an explicit breaking-change marker (`feat!:`, a `breaking-change` label).
+
+One classification path is deliberately excluded from this: a title stating only a target version that happens to start with `0.` (e.g. "Update dependency X to v0.3.0"), with no source version available from a diff or body to confirm the bump actually crossed a 0.x minor boundary. Per 0.x semver convention this is *probably* a breaking change, but it's a guess, not a fact — the preflight tags this `major_unconfirmed` internally and drops it rather than surfacing it in `groups`. If you independently notice a PR like this in a repo's bot PR list, don't treat it as actionable on your own — flag it in the report for manual follow-up instead.
+
 ### Detecting the bump tier
 
 The preflight already does this classification (preferring the real old/new version from each PR's manifest diff over title/body prose — see **Preflight** above) and hands you its `groups` output, which should contain only major-tier PRs. The heuristics below are for double-checking a borderline case or handling a PR the preflight couldn't classify from a diff (e.g. a `git apply --3way` fallback case with no manifest diff to read):
