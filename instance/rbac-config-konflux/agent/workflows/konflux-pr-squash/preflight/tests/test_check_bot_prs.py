@@ -28,12 +28,42 @@ def cycle_39829():
     return json.loads(fixture.read_text())
 
 
-def test_cross_tier_prs_are_not_consolidatable(cycle_39829):
-    for repo in cycle_39829["repos"]:
-        assert check_bot_prs._consolidatable_groups(repo["prs"]) == []
+def test_non_major_prs_in_a_repo_dont_block_the_solo_major_pr(cycle_39829):
+    """insights-rbac has a 0.x-target-only PR (app-common-python) alongside an
+    unrelated unknown-tier PR (django) — neither is actionable, since the
+    0.x-target guess has no source version to confirm it against (see
+    test_unconfirmed_0x_target_major_is_excluded) and django never resolves
+    past "unknown". entitlements-api-go has a confidently-classified major
+    (an explicit Go module path bump, v4 -> v7, stated directly in the title)
+    alongside an unrelated patch-tier digest bump. The digest bump must not
+    block or get folded into the major PR's group — the major PR forms its
+    own solo group and the digest bump is simply dropped.
+    """
+    insights_rbac, entitlements_api_go = cycle_39829["repos"]
+
+    assert check_bot_prs._consolidatable_groups(insights_rbac["prs"]) == []
+    assert check_bot_prs._consolidatable_groups(entitlements_api_go["prs"]) == [
+        {"ecosystem": "go", "tier": "major", "prs": [entitlements_api_go["prs"][1]]}
+    ]
 
 
-def test_same_tier_prs_are_consolidatable():
+def test_unconfirmed_0x_target_major_is_excluded():
+    """A title that only states a 0.x target version, with no source version
+    available from a diff, title, or body, is a guess that the bump is
+    breaking (per 0.x semver convention) — not a fact. Since major bumps now
+    run solo with no batching threshold to absorb a wrong guess, this
+    low-confidence case must not be actionable on its own, unlike a diff- or
+    version-pair-confirmed major.
+    """
+    prs = [{"title": "chore(deps): update dependency app-common-python to v0.3.0"}]
+
+    assert check_bot_prs._tier(prs[0]["title"]) == "major_unconfirmed"
+    assert check_bot_prs._consolidatable_groups(prs) == []
+
+
+def test_patch_only_prs_are_excluded():
+    """This workflow only consolidates major-tier bumps — patch bumps are
+    never grouped, regardless of how many are open."""
     prs = [
         {"title": "chore(deps): update dependency alpha from 1.2.3 to 1.2.4"},
         {"title": "chore(deps): update dependency beta from 2.0.0 to 2.0.1"},
@@ -41,14 +71,14 @@ def test_same_tier_prs_are_consolidatable():
 
     groups = check_bot_prs._consolidatable_groups(prs)
 
-    assert groups == [{"ecosystem": "python", "tier": "patch", "prs": prs}]
+    assert groups == []
 
 
-def test_single_version_titles_use_body_for_tier():
+def test_single_version_titles_with_patch_body_are_excluded():
     """Renovate-style titles ("Update dependency X to vY") only state the
     target version, so title-only classification stalls at "unknown" (see
     cycle-39829). The PR body's changelog table states old -> new, which is
-    enough to classify these as the same tier and consolidate them.
+    enough to classify these as patch tier — which this workflow excludes.
     """
     prs = [
         {
@@ -71,7 +101,7 @@ def test_single_version_titles_use_body_for_tier():
 
     groups = check_bot_prs._consolidatable_groups(prs)
 
-    assert groups == [{"ecosystem": "python", "tier": "patch", "prs": prs}]
+    assert groups == []
 
 
 def test_single_version_title_without_body_data_stays_unknown():
@@ -83,12 +113,13 @@ def test_single_version_title_without_body_data_stays_unknown():
     assert check_bot_prs._consolidatable_groups(prs) == []
 
 
-def test_html_table_body_is_used_for_tier():
+def test_html_table_body_minor_tier_is_excluded():
     """Renovate/Mintmaker sometimes renders the changelog table as raw HTML
     (`<code>1.2.3</code> -&gt; <code>1.4.0</code>`) instead of markdown
     backticks. The tag text between the version and the arrow used to break
     every _BODY_VERSION_PATTERNS regex, silently stalling these at "unknown"
-    tier even though the body clearly states old -> new.
+    tier even though the body clearly states old -> new. These resolve to
+    minor tier, which this workflow excludes.
     """
     prs = [
         {
@@ -109,15 +140,16 @@ def test_html_table_body_is_used_for_tier():
 
     groups = check_bot_prs._consolidatable_groups(prs)
 
-    assert groups == [{"ecosystem": "python", "tier": "minor", "prs": prs}]
+    assert groups == []
 
 
-def test_date_suffixed_stub_package_versions_are_classified():
+def test_date_suffixed_stub_package_patch_versions_are_excluded():
     """types-* stub packages (types-pyyaml, types-requests, ...) version as
     <upstream-major>.<minor>.<patch>.<YYYYMMDD>. The old _VERSION_TOKEN only
     captured 3 dotted segments, so `6.0.12.20250801` -> `6.0.12.20260906`
     truncated to `6.0.12` for both sides, compared equal, and the bump
-    silently stalled at "unknown" tier even with a clean body match.
+    silently stalled at "unknown" tier even with a clean body match. These
+    resolve to patch tier, which this workflow excludes.
     """
     prs = [
         {
@@ -132,10 +164,17 @@ def test_date_suffixed_stub_package_versions_are_classified():
 
     groups = check_bot_prs._consolidatable_groups(prs)
 
-    assert groups == [{"ecosystem": "python", "tier": "patch", "prs": prs}]
+    assert groups == []
 
 
-def test_cycle_39829_emits_skip(cycle_39829, monkeypatch, capsys):
+def test_cycle_39829_emits_start_with_solo_major_groups(cycle_39829, monkeypatch, capsys):
+    """Only entitlements-api-go's confidently-classified major (an explicit
+    Go module path bump stated in the title) is actionable — insights-rbac's
+    only major-looking PR is the low-confidence 0.x-target-only guess, which
+    is excluded (see test_unconfirmed_0x_target_major_is_excluded). Since
+    major bumps are handled solo (no 2+ threshold), a single confident major
+    is enough to start a run.
+    """
     repo_by_name = {repo["repo"]: repo for repo in cycle_39829["repos"]}
     repos = {name: {"url": data["bot_url"], "upstream": data["repo"]} for name, data in repo_by_name.items()}
 
@@ -154,16 +193,19 @@ def test_cycle_39829_emits_skip(cycle_39829, monkeypatch, capsys):
     output = json.loads(capsys.readouterr().out.strip())
 
     assert output["status"] == cycle_39829["expected"]["status"]
-    assert "same ecosystem+tier" in output["content"]
+    content = json.loads(output["content"])
+    repos_in_output = {repo["repo"] for repo in content["repos"]}
+    assert repos_in_output == {"RedHatInsights/entitlements-api-go"}
+    groups_by_repo = {repo["repo"]: repo["groups"] for repo in content["repos"]}
+    assert groups_by_repo["RedHatInsights/entitlements-api-go"] == [
+        {"ecosystem": "go", "tier": "major", "pr_count": 1}
+    ]
 
 
-def test_minor_and_patch_combine_into_one_ecosystem_batch():
-    """A single minor bump and a single patch bump each fail the 2+ threshold
-    alone, but real-world Konflux batches often have exactly this shape (one
-    minor-tier framework bump alongside a patch-tier bump). Combining them
-    into one ecosystem batch — tagged with the more cautious "minor" handling
-    — still gets them consolidated instead of leaving both stranded as
-    singletons.
+def test_minor_and_patch_never_combine_since_both_are_excluded():
+    """A minor bump and a patch bump used to combine into one ecosystem batch
+    when both were below the 2+ threshold alone. Now that only major-tier
+    bumps are consolidated, neither tier is ever grouped, combined or not.
     """
     prs = [
         {"title": "chore(deps): update dependency django from 6.0.2 to 6.1.0"},
@@ -172,14 +214,13 @@ def test_minor_and_patch_combine_into_one_ecosystem_batch():
 
     groups = check_bot_prs._consolidatable_groups(prs)
 
-    assert groups == [{"ecosystem": "python", "tier": "minor", "prs": prs}]
+    assert groups == []
 
 
 def test_major_bumps_never_combine_with_minor_or_patch():
-    """A singleton major bump must never get folded into a minor/patch
-    ecosystem batch just to hit the 2+ threshold — it needs its own
-    breaking-change investigation (see CLAUDE.md), which a patch batch
-    shouldn't be forced into.
+    """A major bump must never get folded into a minor/patch ecosystem batch
+    — it needs its own breaking-change investigation (see CLAUDE.md). It
+    forms its own solo group; the minor/patch PRs are excluded entirely.
     """
     prs = [
         {"title": "chore(deps): update dependency alpha from 1.9.0 to 2.0.0"},
@@ -189,7 +230,26 @@ def test_major_bumps_never_combine_with_minor_or_patch():
 
     groups = check_bot_prs._consolidatable_groups(prs)
 
-    assert groups == [{"ecosystem": "python", "tier": "patch", "prs": [prs[1], prs[2]]}]
+    assert groups == [{"ecosystem": "python", "tier": "major", "prs": [prs[0]]}]
+
+
+def test_major_bumps_never_combine_with_each_other():
+    """Two major-tier PRs for the same ecosystem must never be batched into
+    one consolidated PR, even though they'd have hit the old 2+ threshold —
+    each major bump needs its own isolated breaking-change investigation, so
+    each gets its own solo group instead.
+    """
+    prs = [
+        {"title": "chore(deps): update dependency alpha from 1.9.0 to 2.0.0"},
+        {"title": "chore(deps): update dependency beta from 2.9.0 to 3.0.0"},
+    ]
+
+    groups = check_bot_prs._consolidatable_groups(prs)
+
+    assert groups == [
+        {"ecosystem": "python", "tier": "major", "prs": [prs[0]]},
+        {"ecosystem": "python", "tier": "major", "prs": [prs[1]]},
+    ]
 
 
 def test_diff_versions_resolve_an_otherwise_unknown_tier(monkeypatch):
@@ -211,4 +271,7 @@ def test_diff_versions_resolve_an_otherwise_unknown_tier(monkeypatch):
 
     groups = check_bot_prs._consolidatable_groups(prs, "org/repo")
 
-    assert groups == [{"ecosystem": "python", "tier": "major", "prs": prs}]
+    assert groups == [
+        {"ecosystem": "python", "tier": "major", "prs": [prs[0]]},
+        {"ecosystem": "python", "tier": "major", "prs": [prs[1]]},
+    ]

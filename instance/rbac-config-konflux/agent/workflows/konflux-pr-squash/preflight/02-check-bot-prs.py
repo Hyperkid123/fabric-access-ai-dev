@@ -9,7 +9,6 @@ import json
 import re
 import subprocess
 import sys
-from collections import defaultdict
 
 from common import get_capacity, get_tasks, load_project_repos, output_result, upstream_repo
 
@@ -250,6 +249,15 @@ def _tier(title: str, body: str = "", diff_versions: tuple[str, str] | None = No
     priority over title/body text parsing, which only ever sees what the bot
     chose to write in prose and can't tell tiers apart when the title states
     just the target version.
+
+    Every branch that can return "major" here is backed by an explicit
+    breaking-change signal, an explicit old/new version pair (from a diff,
+    the title, or the body), or an explicit module-path change — all high
+    confidence. The one exception is the trailing "0.x target with no known
+    source version" guess, which returns "major_unconfirmed" instead: major
+    bumps are now acted on solo with no batching threshold to absorb a wrong
+    guess, so a single low-confidence guess must not be enough to trigger a
+    live consolidation run on its own.
     """
     title_lower = title.lower()
     if re.search(r"(?:^|[\s(:])[^\s:]+!:", title_lower) or "breaking" in title_lower:
@@ -278,58 +286,35 @@ def _tier(title: str, body: str = "", diff_versions: tuple[str, str] | None = No
         if tier:
             return tier
 
-    # 0.x target bumps are breaking by project policy. Other target-only
-    # versions are unknown because no source version could be determined
-    # from the title or body.
+    # 0.x target bumps are breaking by project policy, but with no source
+    # version to confirm it against, this is a guess, not a fact — see the
+    # confidence note in the docstring above. Other target-only versions are
+    # unknown because no source version could be determined from the title
+    # or body.
     target_versions = [_version(value) for value in versions]
     if target_versions and target_versions[-1] and target_versions[-1][0] == 0:
-        return "major"
+        return "major_unconfirmed"
     return "unknown"
 
 
 def _consolidatable_groups(prs: list[dict], repo_nwo: str = "") -> list[dict]:
-    """Group PRs into consolidation batches of at least two PRs each.
+    """Build one solo group per major-tier PR.
 
-    Majors are always isolated: they only ever batch with other majors of the
-    same ecosystem, never with minor/patch PRs, no matter how that affects
-    batch size — a major bump needs its own breaking-change investigation
-    (see CLAUDE.md), and folding it into an otherwise-safe patch batch would
-    force that investigation onto the whole batch.
-
-    Minor and patch PRs combine into a single ecosystem-wide batch whenever
-    both are present — the combined batch is always a superset of either
-    tier alone, so this consolidates strictly more than treating them as two
-    separate (and possibly sub-threshold) tier batches. The combined batch is
-    tagged "minor" so it still gets the more cautious minor-bump handling
-    (code-change investigation) rather than being treated as a bare patch
-    batch. When only one of minor/patch is present, it's grouped on its own
-    as before.
+    Only major-tier bumps are handled by this workflow. Minor and patch
+    bumps are excluded entirely (not batched, not reported). Major bumps are
+    never combined with each other, even within the same ecosystem — each
+    major-tier PR needs its own isolated breaking-change investigation, so
+    every one gets its own single-PR group rather than being batched with
+    other majors to hit some size threshold.
     """
-    tiered: defaultdict[tuple[str, str], list[dict]] = defaultdict(list)
+    groups = []
     for pr in prs:
         title = pr.get("title", "")
         ecosystem = _ecosystem(title)
         diff_versions = _diff_versions(repo_nwo, pr["number"], ecosystem) if repo_nwo else None
         tier = _tier(title, pr.get("body", ""), diff_versions)
-        if tier != "unknown":
-            tiered[(ecosystem, tier)].append(pr)
-
-    groups = []
-    for ecosystem in {eco for eco, _ in tiered}:
-        major_prs = tiered.get((ecosystem, "major"), [])
-        minor_prs = tiered.get((ecosystem, "minor"), [])
-        patch_prs = tiered.get((ecosystem, "patch"), [])
-
-        if len(major_prs) >= 2:
-            groups.append({"ecosystem": ecosystem, "tier": "major", "prs": major_prs})
-
-        if minor_prs and patch_prs and len(minor_prs) + len(patch_prs) >= 2:
-            groups.append({"ecosystem": ecosystem, "tier": "minor", "prs": minor_prs + patch_prs})
-        else:
-            if len(minor_prs) >= 2:
-                groups.append({"ecosystem": ecosystem, "tier": "minor", "prs": minor_prs})
-            if len(patch_prs) >= 2:
-                groups.append({"ecosystem": ecosystem, "tier": "patch", "prs": patch_prs})
+        if tier == "major":
+            groups.append({"ecosystem": ecosystem, "tier": "major", "prs": [pr]})
 
     return groups
 
@@ -394,7 +379,7 @@ def main():
             )
 
     if not repos_with_prs:
-        output_result("skip", f"No repos with 2+ open PRs in same ecosystem+tier from {BOT_AUTHOR}")
+        output_result("skip", f"No repos with open major-tier PRs from {BOT_AUTHOR}")
         return
 
     output_result(
