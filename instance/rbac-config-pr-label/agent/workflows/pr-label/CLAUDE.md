@@ -25,13 +25,21 @@ This policy applies to both new and already-tracked PRs. A PR with a missing key
 
 Assembled instructions are **core + this file**. This section **overwrites** the core rule `NEVER push to branches other than bot/<TICKET-KEY>` for this workflow only.
 
-**Replacement:** You MUST push commits onto the **labeled PR's existing head branch** (the branch `gh pr checkout` puts you on). That branch is almost never `bot/<KEY>` — that is expected and required.
+**Replacement:** You MUST push new commits onto the **labeled PR's existing head branch** (the branch `gh pr checkout` puts you on). That branch is almost never `bot/<KEY>` — that is expected and required. This exception changes only which branch receives new commits; it does not permit approving a PR or rewriting its history.
 
 Still NEVER:
 - force-push to `main`/`master`
 - push to a branch that is not this PR's head
 - open a second bot PR
 - delete the author's branch
+
+## PR approval and history guardrails
+
+- **Never approve a PR.** Do not use `gh pr review --approve`, any other `gh` approval option, the GitHub API, or the GitHub UI to submit an approval. You may leave comments or suggested changes; leave the approval decision to a human.
+- **Keep existing commits immutable.** Never amend, rebase, squash, reorder, remove, replace, or re-sign commits already on the PR branch. Do not use `git commit --amend`, interactive rebase, reset-and-recreate, or a force push to change the PR's existing history.
+- Make fixes as new commits appended to the same PR branch. Push only when the update is a normal fast-forward. If the local and remote histories diverged or Git rejects the push because it is non-fast-forward, stop, explain the blocker on the PR, and set `paused_reason`; do not force or overwrite the remote branch.
+- To bring in the default branch, never rebase. If syncing is necessary and safe, merge the default branch into the PR branch and resolve conflicts in a new merge commit, preserving every existing PR commit. If the merge is unsafe or outside the PR's scope, stop and report the blocker.
+- Existing unsigned commits cannot be re-signed by this workflow. Report them as a blocker and leave those commits unchanged so the author can re-sign them.
 
 ## Other-bot PRs (do not take these)
 
@@ -89,7 +97,7 @@ Only tasks with `external_key` prefix `pr-label:`. For each `pr_open`/`pr_change
 **Failing CI**: `gh pr checks <n>`. Fix on the PR branch → commit → push (see **Pushing commits**). `task_update` `last_addressed`.
 - Konflux: `konflux_details:` URL in preflight → `konflux_get_build_logs(details_url=...)`. 401/403 → skip logs, still fix CI.
 
-**Merge conflicts**: Rebase on the default branch → resolve → push. `task_update` `last_addressed`.
+**Merge conflicts**: Never rebase the PR branch. If it is safe and in scope, merge the default branch into the PR branch, resolve conflicts, and push the new merge commit. Preserve all existing PR commits. Otherwise, explain the conflict on the PR and set `paused_reason`. `task_update` `last_addressed`.
 
 **PR review feedback**:
 - MUST check BOTH:
@@ -100,7 +108,7 @@ Only tasks with `external_key` prefix `pr-label:`. For each `pr_open`/`pr_change
 - Address outstanding human/bot-reviewer comments → commit → push → reply on the thread.
 - **Jira on request** (see below) if a human comment asks to file/link a ticket.
 
-**Unsigned commits**: rebase to re-sign, then push. Blocks merge.
+**Unsigned commits**: Do not re-sign or rewrite existing commits. Explain that the author must re-sign them, set `paused_reason`, and leave the PR history unchanged.
 
 **PR merged**: Do **not** invoke `/wrap-up` (that skill deletes branches and drives Jira sprint transitions). Instead:
 1. Resolve `jira_key` from task metadata or the merged PR title. If neither exists (for an older task), create the Jira Task first using the title/body/diff and add the key to the PR title.
@@ -175,15 +183,16 @@ Pick the first untracked candidate. No candidates → memory housekeeping → `N
 
    **If push is rejected or `can_push` is false**:
    1. Do **not** open a new PR or `bot/…` branch.
-   2. Post a review with GitHub suggested-change hunks so the author can one-click commit:
+   2. If the rejection is non-fast-forward or indicates divergent history, stop and report the blocker. Never force-push or overwrite the PR branch.
+   3. Otherwise, post a review with GitHub suggested-change hunks so the author can one-click commit:
       ````
       ```suggestion
       <replacement lines>
       ```
       ````
       Use `gh api` to create a pull-request review on the relevant file/line (`repos/{owner}/{repo}/pulls/{n}/comments` with `commit_id`, `path`, `line`, body containing the suggestion fence).
-   3. Comment on the PR: enable "Allow edits from maintainers" so the next cycle can push.
-   4. `task_update` `last_step="suggestion_posted"` and `last_addressed`.
+   4. Comment on the PR: enable "Allow edits from maintainers" so the next cycle can push.
+   5. `task_update` `last_step="suggestion_posted"` and `last_addressed`.
 
 8. Reply on the PR summarizing what changed. `task_update` `last_addressed`. `/slack-notify` `pr_created` with the `pr-label:…` key if this is the first bot action.
 
@@ -203,7 +212,7 @@ Do **not** search Jira for new work. Do **not** pick tickets by `BOT_LABEL`. Tha
 
 - Git identity/signing is global (`run.py`). Do not `git config --local` for identity. Do not inspect `GPG_SIGNING_KEY`.
 - Never construct git URLs with tokens. `git push origin HEAD` (or the head remote `gh pr checkout` configured).
-- Never close or force-push-delete the author's PR/branch.
+- Never close or force-push-delete the author's PR/branch. Never force-push or rewrite the PR branch's existing commits.
 
 ## Progress Tracking
 
@@ -221,6 +230,7 @@ Do **not** search Jira for new work. Do **not** pick tickets by `BOT_LABEL`. Tha
 - ONE item/cycle
 - PR maintenance > new labeled PRs
 - Always commit onto the labeled PR. Never a parallel bot PR. Core `bot/<KEY>` push rule is **overridden** above.
+- Never approve PRs. Never rewrite or alter existing PR commits; add fixes only as new commits, and stop if a push would not be a fast-forward.
 - Do not delete the author's branch
 - Do not `/wrap-up` or `/post-pr`
 - Jira only when a human asks on the PR
