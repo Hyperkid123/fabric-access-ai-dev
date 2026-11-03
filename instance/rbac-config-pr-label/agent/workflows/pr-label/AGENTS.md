@@ -43,10 +43,32 @@ A PR with a missing key is actionable work, not a reason to skip it.
 
 This workflow replaces the core rule "NEVER push to branches other than
 `bot/<TICKET-KEY>`". You MUST push commits onto the **labeled PR's existing
-head branch** (the branch `gh pr checkout` puts you on) — that branch is
+head branch** (the branch the git checkout below puts you on) — that branch is
 almost never `bot/<KEY>`, and that is expected. Still NEVER: force-push to
 `main`/`master`, push to a branch that is not this PR's head, open a second
 bot PR, or delete the author's branch.
+
+## PR checkout — git, never gh
+
+`gh`/`glab` are thin clients that execute in the remote executor container;
+they cannot see or modify sandbox repo files. `gh pr checkout` can NEVER work
+here — do not attempt it, do not pause on it. All checkout work uses plain
+`git` inside `./repos/<name>/`:
+
+1. Same-repo PR: `git fetch upstream pull/<n>/head:pr-<n> && git checkout
+   pr-<n>` (use `origin` when the repo has no `upstream` remote).
+2. Fork PR: get the head branch + author fork from the preflight data
+   (`branch`, `is_fork`) or `gh pr view <n> --repo <owner>/<repo> --json
+   headRefName,headRepositoryOwner` (view/API calls are fine — they are
+   read-only remote queries). Then:
+   `git remote add head https://github.com/<author-fork>/<repo>.git` (once),
+   `git fetch head <branch> && git checkout -B <branch> --track head/<branch>`.
+3. Push path: same-repo PR → `git push origin HEAD:<branch>`; fork PR with
+   `can_push` → `git push head HEAD:<branch>`.
+
+Authentication/signing are preconfigured globally (see core rules: plain
+`git push`, never tokens) — pushing to `origin`, `upstream` where permitted,
+or the `head` remote needs no setup.
 
 ## Other-bot PRs (do not take these)
 
@@ -80,7 +102,7 @@ close the author's PR or delete their branch; same error twice → set
 
 For each `pr_open`/`pr_changes` task: reload repo guidance; `cd` into the repo
 (`git fetch origin`, plus `git fetch upstream` for forks); check out the
-existing PR head with `gh pr checkout <n> --repo <owner>/<repo>` — never
+existing PR head via git (see **PR checkout — git, never gh**) — never
 create a parallel bot branch. If no Slack notification was sent for a human
 review, `/slack-notify` `review_reminder` with the `pr-label:…` key (bot
 reviews don't count; coderabbitai/sourcery-ai feedback IS actionable). Handle
@@ -116,7 +138,8 @@ in order:
 - **PR closed without merge**: `task_update` `done` + `paused_reason`
   explaining the closure; do not delete branches.
 - **Unresolvable**: PR comment explaining the blocker, `task_update`
-  `paused_reason`, `/slack-notify` `needs_help`, leave the label on.
+  `paused_reason`, `/slack-notify` `needs_help`, leave the label on. Slack
+  delivery failure is non-fatal — note it and continue, never a blocker.
 
 Handle one PR issue, then stop.
 
@@ -134,7 +157,7 @@ Claim: (1) `task_add` with `source_type="github"`, `instance_id`,
 `pr-label:<owner>/<repo>#<number>`), `repo`, `branch`, `status="pr_open"`,
 `title`, and metadata `last_step`/`next_step`/`jira_key`/`prs`; on capacity
 failure stop — do not reuse the Jira bot's `instance_id`. (2) Check out the
-labeled PR with `gh pr checkout <n> --repo <owner>/<repo>`, cloning first via
+labeled PR via git (see **PR checkout — git, never gh**), cloning first via
 the fork `url` from `project-repos.json` into `./repos/<name>/` and adding
 `upstream` if needed. (3) `gh pr view <n> --repo <owner>/<repo>` — title,
 body, review threads are the spec. (4) Search memory (multiple queries) by PR
@@ -148,7 +171,7 @@ in the PR summary when no update is needed. (7) Push:
 
 - `can_push` true (same-repo branch or fork with maintainer edits):
   `git push origin HEAD` (allowed under the security override; for a fork PR
-  push to the head remote `gh pr checkout` configured). Never `gh pr create`.
+  push to the `head` remote added during checkout). Never `gh pr create`.
 - Push rejected or `can_push` false: do not open a new PR or `bot/…` branch;
   post a review with ```suggestion``` hunks via
   `gh api repos/{owner}/{repo}/pulls/{n}/comments` (with `commit_id`, `path`,
@@ -175,8 +198,8 @@ work and do not pick tickets by `BOT_LABEL` — that is the other instance.
 
 Git identity/signing is global (`run.py`); do not `git config --local` for
 identity and do not inspect `GPG_SIGNING_KEY`. Never construct git URLs with
-tokens — use `git push origin HEAD` (or the head remote `gh pr checkout`
-configured). Never close or force-push-delete the author's PR/branch.
+tokens — use `git push origin HEAD` (or the `head` remote added during PR
+checkout). Never close or force-push-delete the author's PR/branch.
 
 ## Progress tracking
 
