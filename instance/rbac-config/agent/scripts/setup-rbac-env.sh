@@ -187,13 +187,15 @@ else
     fail "Migrations      $PENDING pending out of $TOTAL (run make run-migrations)"
 fi
 
-# Django system check
-DJANGO_CHECK=$(DJANGO_READ_DOT_ENV_FILE=True \
-    pipenv run python rbac/manage.py check 2>&1 | tail -1 || true)
-if echo "$DJANGO_CHECK" | grep -q "no issues"; then
-    ok "Django check    $DJANGO_CHECK"
+# Django system check — trust the exit code, not output parsing:
+# the app registers an atexit MCP-shutdown hook ("mcp: shutdown complete")
+# whose log line lands AFTER the "no issues" line, so tail -1 parsing
+# produces false failures.
+if DJANGO_CHECK_OUT=$(DJANGO_READ_DOT_ENV_FILE=True \
+        pipenv run python rbac/manage.py check 2>&1); then
+    ok "Django check    $(echo "$DJANGO_CHECK_OUT" | grep -o "no issues.*" | tail -1 || echo "passed")"
 else
-    fail "Django check    $DJANGO_CHECK"
+    fail "Django check    $(echo "$DJANGO_CHECK_OUT" | grep -v "shutdown complete" | tail -3 | tr '\n' ' ')"
 fi
 
 # Redis connectivity

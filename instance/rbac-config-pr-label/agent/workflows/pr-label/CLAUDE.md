@@ -25,7 +25,7 @@ This policy applies to both new and already-tracked PRs. A PR with a missing key
 
 Assembled instructions are **core + this file**. This section **overwrites** the core rule `NEVER push to branches other than bot/<TICKET-KEY>` for this workflow only.
 
-**Replacement:** You MUST push new commits onto the **labeled PR's existing head branch** (the branch `gh pr checkout` puts you on). That branch is almost never `bot/<KEY>` — that is expected and required. This exception changes only which branch receives new commits; it does not permit approving a PR or rewriting its history.
+**Replacement:** You MUST push new commits onto the **labeled PR's existing head branch** (the branch the git checkout procedure puts you on). That branch is almost never `bot/<KEY>` — that is expected and required. This exception changes only which branch receives new commits; it does not permit approving a PR or rewriting its history.
 
 Still NEVER:
 - force-push to `main`/`master`
@@ -86,10 +86,11 @@ Only tasks with `external_key` prefix `pr-label:`. For each `pr_open`/`pr_change
 
 0. Reload persona for the repo tech stack.
 1. `cd` repo dir. `git fetch origin`. Fork remote? Also `git fetch upstream`.
-2. Host is GitHub (`gh`). Checkout the **existing PR head** — never create a parallel bot branch:
+2. Host is GitHub (`gh`). Checkout the **existing PR head** — never create a parallel bot branch. `gh pr checkout` CANNOT work (gh is a thin client executing in the remote executor container, no sandbox repo access). Use git:
    ```
-   gh pr checkout <n> --repo <owner/repo>
+   git fetch upstream pull/<n>/head:pr-<n> && git checkout pr-<n>
    ```
+   Fork PR: `git remote add head https://github.com/<author-fork>/<repo>.git` (once), then `git fetch head <branch> && git checkout -B <branch> --track head/<branch>`.
 3. **Review reminder**: No Slack notification sent → `/slack-notify` `review_reminder` with the `pr-label:…` key (not a Jira key). Bot reviews don't count as human review. Bot review feedback (coderabbitai, sourcery-ai) IS actionable.
 
 4. Handle in order:
@@ -158,11 +159,11 @@ Pick the first untracked candidate. No candidates → memory housekeeping → `N
    ```
    `external_key` MUST be `pr-label:<owner/repo>#<number>`. If `task_add` fails on capacity, stop — do not reuse the Jira bot's `instance_id`.
 
-2. **Checkout** the labeled PR (not a new branch):
+2. **Checkout** the labeled PR (not a new branch) — via git, never `gh pr checkout` (thin client, no sandbox repo access):
    ```
-   gh pr checkout <n> --repo <owner/repo>
+   git fetch upstream pull/<n>/head:pr-<n> && git checkout pr-<n>
    ```
-   Clone first if needed: `git clone --depth 1` the fork `url` from `project-repos.json` into `./repos/<name>/`, add `upstream`, then `gh pr checkout`.
+   Clone first if needed: `git clone --depth 1` the fork `url` from `project-repos.json` into `./repos/<name>/`, add `upstream`. Fork PR head: add the author-fork remote as `head`, fetch its `<branch>`.
 
 3. **Details**: `gh pr view <n> --repo <owner/repo>` — title, body, review threads. That is the spec.
 
@@ -179,7 +180,7 @@ Pick the first untracked candidate. No candidates → memory housekeeping → `N
    ```
    git push origin HEAD
    ```
-   This **is** allowed here (see **Core security override**). For a fork PR, push to the head remote after `gh pr checkout`. Do not `gh pr create`.
+   This **is** allowed here (see **Core security override**). For a fork PR, push to the `head` remote added during checkout. Do not `gh pr create`.
 
    **If push is rejected or `can_push` is false**:
    1. Do **not** open a new PR or `bot/…` branch.
@@ -211,7 +212,7 @@ Do **not** search Jira for new work. Do **not** pick tickets by `BOT_LABEL`. Tha
 ### Pushing commits (shared rules)
 
 - Git identity/signing is global (`run.py`). Do not `git config --local` for identity. Do not inspect `GPG_SIGNING_KEY`.
-- Never construct git URLs with tokens. `git push origin HEAD` (or the head remote `gh pr checkout` configured).
+- Never construct git URLs with tokens. `git push origin HEAD` (or the `head` remote added during PR checkout).
 - Never close or force-push-delete the author's PR/branch. Never force-push or rewrite the PR branch's existing commits.
 
 ## Progress Tracking
