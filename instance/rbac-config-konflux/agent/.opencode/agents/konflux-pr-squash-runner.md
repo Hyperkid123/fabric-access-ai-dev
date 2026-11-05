@@ -1,7 +1,7 @@
 ---
 description: Processes one scheduled Konflux bot-PR consolidation cycle using the konflux-pr-squash workflow.
 mode: primary
-model: rehor-openai/gpt-6-luna
+model: rehor-openai/gpt-6.1-terra
 request:
   body:
     reasoning:

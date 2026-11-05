@@ -1,7 +1,7 @@
 ---
 description: Processes one scheduled labeled-PR cycle using the pr-label workflow.
 mode: primary
-model: rehor-openai/gpt-6-luna
+model: rehor-openai/gpt-6.1-terra
 request:
   body:
     reasoning:

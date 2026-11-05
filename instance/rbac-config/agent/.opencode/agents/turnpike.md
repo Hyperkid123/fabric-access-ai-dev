@@ -1,7 +1,7 @@
 ---
 description: Implements Turnpike changes in the Python/Flask reverse-proxy authentication gateway.
 mode: subagent
-model: rehor-openai/gpt-6-luna
+model: rehor-openai/gpt-6.1-terra
 request:
   body:
     reasoning:

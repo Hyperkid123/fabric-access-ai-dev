@@ -1,7 +1,7 @@
 ---
 description: Implements insights-rbac changes in the Django REST Framework RBAC backend service.
 mode: subagent
-model: rehor-openai/gpt-6-luna
+model: rehor-openai/gpt-6.1-terra
 request:
   body:
     reasoning:
