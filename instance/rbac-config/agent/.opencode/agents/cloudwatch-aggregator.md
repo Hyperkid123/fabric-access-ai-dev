@@ -1,7 +1,7 @@
 ---
 description: Implements cloudwatch-aggregator changes in the Python/Flask logging proxy service.
 mode: subagent
-model: rehor-openai/gpt-6-luna
+model: rehor-openai/gpt-6.1-terra
 request:
   body:
     reasoning:

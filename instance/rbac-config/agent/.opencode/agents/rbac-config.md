@@ -1,7 +1,7 @@
 ---
 description: Implements rbac-config changes in the declarative roles, permissions, and KSL schema repository.
 mode: subagent
-model: rehor-openai/gpt-6-luna
+model: rehor-openai/gpt-6.1-terra
 request:
   body:
     reasoning:

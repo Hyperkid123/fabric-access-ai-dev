@@ -1,7 +1,7 @@
 ---
 description: Implements uhc-auth-proxy changes in the Go cluster-operator authentication proxy.
 mode: subagent
-model: rehor-openai/gpt-6-luna
+model: rehor-openai/gpt-6.1-terra
 request:
   body:
     reasoning:
