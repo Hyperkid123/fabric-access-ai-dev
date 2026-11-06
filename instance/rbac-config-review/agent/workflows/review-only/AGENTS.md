@@ -64,8 +64,13 @@ bot_status_update with this instance ID at cycle start and end.
    impact report instead of re-fetching related-repo content), then EXECUTE
    each applicable dimension sequentially per its own **3.3 rbac-config-review
    Workflow Dispatch** section, then MERGE (dedup, consensus). Feed the
-   `cross-repo-dependencies` dimension this repo's `review-context.yaml`
-   entry and the impact report's `consumer_usages` as its candidate evidence.
+   `architecture` dimension this repo's `review-context.yaml` entry, its
+   manifest-pinned related-repository snapshots and documents, and the impact
+   report as context for whole-system architecture review. Treat impact-report
+   matches as leads, not proof, and keep findings tied to changed PR lines.
+   Feed `cross-repo-dependencies` the same pinned context plus the impact
+   report's `consumer_usages` as candidate evidence. Do not infer or fetch
+   repositories or documents outside the target repo's declared context.
    Follow the skill's own **Step 5 Override: rbac-config-review Workflow
    Output** to convert the merged findings into the JSON file described
    below — at most seven actionable findings under the snapshot directory:
