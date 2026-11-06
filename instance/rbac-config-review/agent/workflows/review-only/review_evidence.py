@@ -138,10 +138,10 @@ def render_review(manifest: dict, findings: list[dict]) -> str:
         loc = finding["location"]
         lines.extend([
             f"### {finding['id']}: {finding['claim']}", "",
-            f"Location: `{loc['file']}:{loc['line']}`", "",
-            f"Trigger: {finding['trigger']}", "",
-            f"Impact: {finding['impact']}", "",
-            f"Evidence: {finding['evidence']['explanation']}", "",
+            f"**Location:** `{loc['file']}:{loc['line']}`", "",
+            f"**Trigger:** {finding['trigger']}", "",
+            f"**Impact:** {finding['impact']}", "",
+            f"**Evidence:** {finding['evidence']['explanation']}", "",
         ])
         for ref in finding["refs"]:
             if ref["repo"] == pr["repo"] and ref["sha"] == pr["base_sha"]:
@@ -153,7 +153,7 @@ def render_review(manifest: dict, findings: list[dict]) -> str:
             lines.append(
                 f"- [{label}]({url})"
             )
-        lines.extend(["", f"Suggested fix: {finding['suggested_fix']}", ""])
+        lines.extend(["", f"**Suggested fix:** {finding['suggested_fix']}", ""])
     lines.append(f"<!-- fabric-access-review:{pr['head_sha']}:{pr['base_sha']} -->")
     return "\n".join(lines) + "\n"
 
@@ -264,13 +264,13 @@ def _render_finding_block(pr: dict, finding: dict) -> list[str]:
     loc = finding["location"]
     lines = [
         f"### {finding['id']}: {finding['claim']}", "",
-        f"Location: `{loc['file']}:{loc['line']}`", "",
-        f"Trigger: {finding['trigger']}", "",
-        f"Impact: {finding['impact']}", "",
-        f"Evidence: {finding['evidence']['explanation']}", "",
+        f"**Location:** `{loc['file']}:{loc['line']}`", "",
+        f"**Trigger:** {finding['trigger']}", "",
+        f"**Impact:** {finding['impact']}", "",
+        f"**Evidence:** {finding['evidence']['explanation']}", "",
     ]
     lines.extend(f"- {_ref_link(pr, ref)}" for ref in finding["refs"])
-    lines.extend(["", f"Suggested fix: {finding['suggested_fix']}", ""])
+    lines.extend(["", f"**Suggested fix:** {finding['suggested_fix']}", ""])
     return lines
 
 
@@ -288,7 +288,7 @@ def render_ledger(manifest: dict, ledger: list[dict], new_findings: list[dict], 
         label = "✅ Addressed" if entry["status"] == "addressed" else "⚠️ Still open"
         lines.append(f"### {entry['id']}: {entry['claim']} — {label}")
         lines.append("")
-        lines.append(f"Location: `{entry['location']['file']}:{entry['location']['line']}`")
+        lines.append(f"**Location:** `{entry['location']['file']}:{entry['location']['line']}`")
         lines.append("")
         if entry["status"] == "addressed" and entry.get("status_evidence"):
             lines.append(f"Fix evidence: {entry['status_evidence']['explanation']}")

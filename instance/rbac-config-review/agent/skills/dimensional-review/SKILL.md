@@ -202,6 +202,8 @@ Sort findings by:
 
 **This instance does not use Step 5 (OUTPUT) below as written.** `review-runner` never writes `dimensional-review.md`/`.json`, never runs `--format pr-comment`, and never posts directly — `workflows/review-only/AGENTS.md` step 7 is the only place a review is posted, through `gh pr review --comment`, after `review_evidence.py` validates it. Posting any dimensional-review output directly would bypass that evidence gate and the verifier.
 
+**Review label formatting:** Use bold Markdown labels for `Location:`, `Trigger:`, `Impact:`, `Evidence:`, and `Suggested fix:` in every rendered finding. Inline comment bodies must include `**Impact:**` and use the same bold labels for any other fields they contain.
+
 Instead, after MERGE, convert the deduped findings into the workflow's finding schema and continue its pipeline:
 
 For the `architecture` dimension, include the current target repository's `review-context.yaml` entry, its related-repository snapshots and documents pinned in the review manifest, and the impact report as context for reviewing the whole declared system architecture. Treat impact-report matches as leads, not proof; do not infer unlisted dependencies, and keep findings tied to changed PR lines. Give `cross-repo-dependencies` the same pinned context plus `consumer_usages` as candidate evidence.

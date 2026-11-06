@@ -124,6 +124,10 @@ bot_status_update with this instance ID at cycle start and end.
    the review body (flat, or with carried-forward status when a ledger is
    used) and reports the new update_count. Never hand-edit its output or post
    an unvalidated draft.
+   The renderer uses bold Markdown labels: `**Location:**`, `**Trigger:**`,
+   `**Impact:**`, `**Evidence:**`, and `**Suggested fix:**`. If inline comment
+   bodies are added to a review, apply the same labels and include both
+   `**Impact:**` and `**Suggested fix:**` in each actionable comment.
 6. Re-read the PR head and base SHAs immediately before posting. If either
    changed, save progress and stop; preflight will select the new pair next
    cycle.
