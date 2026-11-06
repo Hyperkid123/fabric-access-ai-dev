@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from urllib.parse import quote
 
@@ -70,6 +71,8 @@ def validate_findings(data: object, manifest: dict, impact: dict) -> list[dict]:
         if not isinstance(finding, dict):
             raise EvidenceError("Finding must be an object")
         ident = required_text(finding.get("id"), "finding.id")
+        if not re.fullmatch(r"F[1-9]\d*", ident):
+            raise EvidenceError("finding.id must use the F1, F2, ... format")
         if ident in ids:
             raise EvidenceError(f"Duplicate finding id: {ident}")
         ids.add(ident)
@@ -96,6 +99,7 @@ def validate_findings(data: object, manifest: dict, impact: dict) -> list[dict]:
             raise EvidenceError("Finding location must be a changed PR line")
         location_sha = manifest["pr"]["base_sha"] if side == "removed" else manifest["pr"]["head_sha"]
         location_ref = validate_ref({**location, "sha": location_sha}, manifest)
+        location_ref["side"] = side
         evidence = finding.get("evidence")
         if not isinstance(evidence, dict) or not isinstance(evidence.get("refs"), list):
             raise EvidenceError("finding.evidence.refs must be an array")
@@ -129,6 +133,31 @@ def confirmed(findings: list[dict], data: object) -> list[dict]:
     return [finding for finding in findings if by_id[finding["id"]]["status"] == "confirmed"]
 
 
+def render_inline_comments(findings: list[dict]) -> list[dict]:
+    """Render validated findings as line-anchored GitHub review comments."""
+    comments = []
+    for finding in findings:
+        location = finding["location"]
+        side = "RIGHT" if location["side"] == "added" else "LEFT"
+        body = "\n\n".join([
+            f"**[{finding['id']}]** {finding['claim']}",
+            f"**Location:** `{location['file']}:{location['line']}`",
+            f"**Trigger:** {finding['trigger']}",
+            f"**Impact:** {finding['impact']}",
+            f"**Evidence:** {finding['evidence']['explanation']}",
+            f"**Suggested fix:** {finding['suggested_fix']}",
+            f"<!-- fabric-access-finding:{finding['id']} -->",
+        ])
+        comments.append({
+            "id": finding["id"],
+            "path": location["file"],
+            "line": location["line"],
+            "side": side,
+            "body": body,
+        })
+    return comments
+
+
 def render_review(manifest: dict, findings: list[dict]) -> str:
     pr = manifest["pr"]
     lines = ["## Review", ""]
@@ -137,7 +166,7 @@ def render_review(manifest: dict, findings: list[dict]) -> str:
     for finding in findings:
         loc = finding["location"]
         lines.extend([
-            f"### {finding['id']}: {finding['claim']}", "",
+            f"### [{finding['id']}] {finding['claim']}", "",
             f"**Location:** `{loc['file']}:{loc['line']}`", "",
             f"**Trigger:** {finding['trigger']}", "",
             f"**Impact:** {finding['impact']}", "",
@@ -231,6 +260,13 @@ def apply_ledger_updates(ledger: list[dict], new_findings: list[dict],
                           resolved_verifications: list[dict], head_sha: str) -> list[dict]:
     """Merge this cycle's re-checks and new findings into the persisted ledger."""
     by_id = {v["finding_id"]: v for v in resolved_verifications}
+    ledger_ids = [entry["id"] for entry in ledger]
+    if len(ledger_ids) != len(set(ledger_ids)):
+        raise EvidenceError("Prior ledger contains duplicate finding IDs")
+    prior_ids = set(ledger_ids)
+    reused_ids = sorted(prior_ids.intersection(finding["id"] for finding in new_findings))
+    if reused_ids:
+        raise EvidenceError(f"New findings reuse prior ledger IDs: {', '.join(reused_ids)}")
     updated: list[dict] = []
     for entry in ledger:
         if entry.get("status") != "open" or entry["id"] not in by_id:
@@ -263,7 +299,7 @@ def _ref_link(pr: dict, ref: dict) -> str:
 def _render_finding_block(pr: dict, finding: dict) -> list[str]:
     loc = finding["location"]
     lines = [
-        f"### {finding['id']}: {finding['claim']}", "",
+        f"### [{finding['id']}] {finding['claim']}", "",
         f"**Location:** `{loc['file']}:{loc['line']}`", "",
         f"**Trigger:** {finding['trigger']}", "",
         f"**Impact:** {finding['impact']}", "",
@@ -286,17 +322,24 @@ def render_ledger(manifest: dict, ledger: list[dict], new_findings: list[dict], 
         lines.extend(["None yet.", ""])
     for entry in carried:
         label = "✅ Addressed" if entry["status"] == "addressed" else "⚠️ Still open"
-        lines.append(f"### {entry['id']}: {entry['claim']} — {label}")
+        lines.append(f"### [{entry['id']}] {entry['claim']} — {label}")
         lines.append("")
         lines.append(f"**Location:** `{entry['location']['file']}:{entry['location']['line']}`")
         lines.append("")
+        lines.append(f"**Trigger:** {entry['trigger']}")
+        lines.append("")
+        lines.append(f"**Impact:** {entry['impact']}")
+        lines.append("")
+        lines.append(f"**Evidence:** {entry['evidence']['explanation']}")
+        lines.extend(f"- {_ref_link(pr, ref)}" for ref in entry["refs"])
+        lines.extend(["", f"**Suggested fix:** {entry['suggested_fix']}", ""])
         if entry["status"] == "addressed" and entry.get("status_evidence"):
-            lines.append(f"Fix evidence: {entry['status_evidence']['explanation']}")
+            lines.append(f"**Status evidence:** {entry['status_evidence']['explanation']}")
             lines.extend(f"- {_ref_link(pr, ref)}" for ref in entry["status_evidence"]["refs"])
         elif entry.get("status_note"):
-            lines.append(f"Status: {entry['status_note']}")
+            lines.append(f"**Status:** {entry['status_note']}")
         else:
-            lines.append("No change detected in this region since it was last checked.")
+            lines.append("**Status:** No change detected in this region since it was last checked.")
         lines.append("")
     lines.append("## New Findings")
     lines.append("")
@@ -317,6 +360,8 @@ def main() -> None:
     parser.add_argument("--verification-verdicts", type=Path, help="review-verifier's verdicts for 'addressed' re-checks")
     parser.add_argument("--update-count", type=int, help="Update count so far; this run writes update-count + 1")
     parser.add_argument("--ledger-output", type=Path, help="Where to write the updated ledger.json")
+    parser.add_argument("--inline-comments-output", type=Path,
+                        help="Where to write inline comments rendered from confirmed findings")
     args = parser.parse_args()
     try:
         manifest = json.loads(args.manifest.read_text())
@@ -326,7 +371,21 @@ def main() -> None:
         if args.ledger is None:
             body = render_review(manifest, accepted)
             args.output.write_text(body)
-            print(json.dumps({"confirmed": len(accepted), "proposed": len(findings), "body_file": str(args.output)}))
+            initial_ledger = apply_ledger_updates(
+                [], accepted, [], manifest["pr"]["head_sha"]
+            )
+            if args.ledger_output:
+                args.ledger_output.write_text(json.dumps(initial_ledger, indent=2))
+            if args.inline_comments_output:
+                args.inline_comments_output.write_text(json.dumps(render_inline_comments(accepted), indent=2))
+            print(json.dumps({
+                "confirmed": len(accepted), "proposed": len(findings),
+                "body_file": str(args.output),
+                "ledger_size": len(initial_ledger),
+                "ledger_file": str(args.ledger_output) if args.ledger_output else None,
+                "update_count": 0,
+                "inline_comments_file": str(args.inline_comments_output) if args.inline_comments_output else None,
+            }))
             return
         if not (args.verifications and args.verification_verdicts and args.ledger_output and args.update_count is not None):
             raise EvidenceError("--ledger requires --verifications, --verification-verdicts, --update-count, --ledger-output")
@@ -338,10 +397,13 @@ def main() -> None:
         body = render_ledger(manifest, new_ledger, accepted, update_count)
         args.output.write_text(body)
         args.ledger_output.write_text(json.dumps(new_ledger, indent=2))
+        if args.inline_comments_output:
+            args.inline_comments_output.write_text(json.dumps(render_inline_comments(accepted), indent=2))
         print(json.dumps({
             "confirmed": len(accepted), "proposed": len(findings),
             "ledger_size": len(new_ledger), "update_count": update_count,
             "body_file": str(args.output), "ledger_file": str(args.ledger_output),
+            "inline_comments_file": str(args.inline_comments_output) if args.inline_comments_output else None,
         }))
     except (EvidenceError, OSError, ValueError, KeyError) as exc:
         parser.exit(1, f"Review evidence invalid: {exc}\n")

@@ -82,6 +82,10 @@ bot_status_update with this instance ID at cycle start and end.
    "evidence":{"explanation":"...","refs":[{"repo":"owner/repo",
    "sha":"40-character pinned SHA","file":"path","line":1}]},
    "suggested_fix":"..."}]}. Use only source revisions in the manifest.
+   Assign a unique ID to every finding (`F1`, `F2`, ...). IDs must be unique
+   across the task ledger: keep prior IDs for carried findings and allocate
+   the next unused ID to each new finding. Use that same ID in the summary
+   heading and the corresponding inline comment; do not renumber between them.
    For removed lines, use the base SHA in evidence refs and side="removed"
    in the location; the validator checks the pinned PR diff. All locations
    must be changed lines.
@@ -113,21 +117,25 @@ bot_status_update with this instance ID at cycle start and end.
    this task's first review), run:
    review_evidence.py --manifest <manifest_path> --findings <findings.json>
    --verdicts <verdicts.json> --output <review-body.md>
+   --ledger-output <ledger.json path under this cycle's snapshot directory>
+   --inline-comments-output <inline-comments.json>
    Otherwise run the same command plus:
    --ledger <prior ledger_path> --verifications <verifications.json>
    --verification-verdicts <verification-verdicts.json>
    --update-count <task metadata's current update_count, or 0 if absent>
-   --ledger-output <new ledger.json path under this cycle's snapshot directory>
    Either way it validates pinned code references, changed-file locations,
-   the seven-finding limit, and one verdict per finding; the ledger form also
-   validates the re-checks and merges them into a new ledger.json. It renders
-   the review body (flat, or with carried-forward status when a ledger is
-   used) and reports the new update_count. Never hand-edit its output or post
-   an unvalidated draft.
+   the seven-finding limit, and one verdict per finding, and writes the
+   task's ledger.json (initial ledger on the first review, merged ledger on
+   later reviews). The ledger form also validates re-checks. It renders the
+   review body (flat, or with carried-forward status when a ledger is used)
+   and reports the update_count (0 on the first review). Never hand-edit its
+   output or post an unvalidated draft.
    The renderer uses bold Markdown labels: `**Location:**`, `**Trigger:**`,
    `**Impact:**`, `**Evidence:**`, and `**Suggested fix:**`. If inline comment
    bodies are added to a review, apply the same labels and include both
    `**Impact:**` and `**Suggested fix:**` in each actionable comment.
+   Prefix each inline comment with its finding ID as `**[F1]**`; use the
+   same ID in the summary heading as `### [F1] ...`.
 6. Re-read the PR head and base SHAs immediately before posting. If either
    changed, save progress and stop; preflight will select the new pair next
    cycle.
@@ -140,9 +148,20 @@ bot_status_update with this instance ID at cycle start and end.
    - Task metadata has a `review_id`: update that same review in place —
      `gh api repos/<owner>/<repo>/pulls/<number>/reviews/<review_id> --method PUT -f body="$(cat <review-body.md>)"`.
      Never post a second review for a task that already has one.
+   Before inline publishing, update task metadata to keep status=in_progress and
+   save review_id, review URL, the current ledger path, and update_count. This
+   lets a retry update the same summary and preserve IDs already shown there.
+   Then run `python3 workflows/review-only/post_inline_comments.py --repo <owner>/<repo>
+   --pr <number> --head-sha <head_sha> --comments <inline-comments.json>`.
+   It posts each confirmed finding at its changed line, carrying the same ID
+   used in the summary and all five bold finding labels. It updates an existing
+   same-head comment with the same ID instead of duplicating it. These inline
+   threads do not create another review object. If this step fails, leave the
+   task in progress.
    Include file/line references in the review body (already true of the
    validated output). Record the review URL and id.
-8. Mark the task done with review_id, the new update_count, and ledger_path
+8. Mark the task done with review_id, the new update_count (0 on its first
+   review), and ledger_path
    (the `--ledger-output` path from step 5). `memory_store`/`memory_delete`
    are denied for this instance (see review-runner's permissions) — do not
    attempt to store a codebase_pattern memory; the task's own state (ledger,

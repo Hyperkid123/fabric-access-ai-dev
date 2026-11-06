@@ -3,9 +3,10 @@
 `rbac-config-review` is a separate, review-only Rehor bot instance (not yet
 deployed). Each cycle it reviews at most one GitHub PR labeled in
 `review-context.yaml`, across the repositories in `project-repos.json`. It
-never edits, commits, pushes, approves, requests changes, or merges — it
-keeps exactly **one** GitHub review comment per PR, editing it in place each
-cycle rather than posting a new one.
+never edits, commits, pushes, approves, requests changes, or merges — it keeps
+one GitHub review summary per PR and edits it in place each cycle. It also
+posts one idempotent inline thread per actionable finding, using the same
+finding ID in the summary and inline comment.
 
 ## Stages
 
@@ -18,9 +19,9 @@ flowchart LR
         A["Preflight<br/>(review_queue.py)"] --> B["Context<br/>(build_context.py)"]
         B --> C["Review<br/>(dimensional-review)"]
         C --> D["Verify<br/>(review-verifier)"]
-        D --> E["Publish<br/>(review_evidence.py)"]
+        D --> E["Publish<br/>(review_evidence.py + post_inline_comments.py)"]
     end
-    E --> GH2["GitHub PR comment"]
+    E --> GH2["GitHub review summary + inline threads"]
     E -.-> Memory
 
     classDef script fill:#e2e3e5,stroke:#6c757d,color:#000;
@@ -42,7 +43,8 @@ plain Python and run every cycle regardless of whether anything needs review.
 | Review criteria | `skills/dimensional-review/SKILL.md` | **AI** (review-runner) | Multi-dimension review (correctness, security, `cross-repo-dependencies`, …) over the pinned context; deduped and consensus-scored |
 | Explanation quality | `skills/explanatory-answer/SKILL.md` | **AI** (review-runner) | How to write each finding's `claim`/`trigger`/`impact`/`evidence`/`suggested_fix` so it's specific and cited, not generic filler that happens to pass validation |
 | Verifier | `.opencode/agents/review-verifier.md` | **AI** (subagent) | Independently tries to refute every proposed finding using only pinned sources |
-| Evidence gate | `review_evidence.py` | Script | Rejects any finding whose location/reference isn't a real pinned line; caps at seven findings; requires one verdict per finding; renders the final review body |
+| Evidence gate | `review_evidence.py` | Script | Rejects any finding whose location/reference isn't a real pinned line; caps at seven findings; requires one verdict per finding; renders the summary and inline comments with matching IDs |
+| Inline publisher | `post_inline_comments.py` | Script | Posts or updates one anchored comment per confirmed finding on the current PR head, deduplicated by finding ID |
 
 ## The task queue: review_queue.py
 
@@ -200,9 +202,10 @@ sequenceDiagram
         V->>R: verdicts.json (confirmed/refuted/uncertain)
     end
     rect rgb(226, 227, 229)
-        R->>R: review_evidence.py → review-body.md + ledger.json
+        R->>R: review_evidence.py → review-body.md + inline-comments.json + ledger.json
     end
-    R->>GH: create review (1st cycle) or PUT same review_id (later cycles)
+    R->>GH: create/update one review summary
+    R->>GH: post/update inline threads using stable finding IDs
     R->>Q: task_update (last_reviewed_sha, review_id, update_count)
 ```
 
@@ -242,6 +245,9 @@ normally a `consumer_usages` entry from `impact.json` — never the
 
 ## Ledger: one review, updated over time
 
+The first cycle writes an initial `ledger.json` with every confirmed finding
+marked open; its IDs are carried forward unchanged on later cycles.
+
 From a task's second cycle onward, `review_evidence.py` also takes a prior
 `ledger.json` (every finding ever confirmed for this task, each `open` or
 `addressed`) and a proposed re-check of each `open` entry:
@@ -260,7 +266,9 @@ those (same adversarial check as new findings) before the ledger entry closes.
 entry is required; the merged result becomes the new `ledger.json`, and the
 posted review body gets two sections — *Previously Flagged* (carried entries,
 ✅ addressed or ⚠️ still open) and *New Findings* (this cycle's) — plus an
-`update #N` counter in the header.
+`update #N` counter in the header. Each heading uses the finding's stable ID;
+new inline comments start with that same ID and include all five bold finding
+labels.
 
 ## Example comments
 
@@ -275,21 +283,39 @@ pinned line instead of a remembered impression of HBI's code.
 ```markdown
 ## Review
 
-### F1: Old permission name disappears while HBI still sends it
+### [F1] Old permission name disappears while HBI still sends it
 
-Location: `api/permissions.py:1`
+**Location:** `api/permissions.py:1`
 
-Trigger: HBI calls check_permission("inventory.read_hosts") on every host-read request
+**Trigger:** HBI calls check_permission("inventory.read_hosts") on every host-read request
 
-Impact: HBI requests to the inventory API are rejected with 403 after this PR merges
+**Impact:** HBI requests to the inventory API are rejected with 403 after this PR merges
 
-Evidence: HBI's client.py still sends the old permission string
+**Evidence:** HBI's client.py still sends the old permission string
 
 - [RedHatInsights/insights-host-inventory:client.py:1](https://github.com/RedHatInsights/insights-host-inventory/blob/c3c3.../client.py#L1)
 
-Suggested fix: Keep inventory.read_hosts as an accepted alias until HBI migrates
+**Suggested fix:** Keep inventory.read_hosts as an accepted alias until HBI migrates
 
 <!-- fabric-access-review:a1a1...:b2b2... -->
+```
+
+The corresponding inline comment starts with the same identifier:
+
+```markdown
+**[F1]** Old permission name disappears while HBI still sends it
+
+**Location:** `api/permissions.py:1`
+
+**Trigger:** HBI calls check_permission("inventory.read_hosts") on every host-read request
+
+**Impact:** HBI requests to the inventory API are rejected with 403 after this PR merges
+
+**Evidence:** HBI's client.py still sends the old permission string
+
+**Suggested fix:** Keep inventory.read_hosts as an accepted alias until HBI migrates
+
+<!-- fabric-access-finding:F1 -->
 ```
 
 **Follow-up cycle, same comment edited in place** (`render_ledger` — F1 got
@@ -301,34 +327,52 @@ shows what the status comment is actually for):
 
 ## Previously Flagged
 
-### F1: Old permission name disappears while HBI still sends it — ✅ Addressed
+### [F1] Old permission name disappears while HBI still sends it — ✅ Addressed
 
-Location: `api/permissions.py:1`
+**Location:** `api/permissions.py:1`
 
-Fix evidence: Commit adds ALIAS = "inventory.read_hosts" alongside the new permission name
+**Trigger:** HBI calls check_permission("inventory.read_hosts") on every host-read request
+
+**Impact:** HBI requests to the inventory API are rejected with 403 after this PR merges
+
+**Evidence:** HBI's client.py still sends the old permission string
+- [RedHatInsights/insights-host-inventory:client.py:1](https://github.com/RedHatInsights/insights-host-inventory/blob/c3c3.../client.py#L1)
+
+**Suggested fix:** Keep inventory.read_hosts as an accepted alias until HBI migrates
+
+**Status evidence:** Commit adds ALIAS = "inventory.read_hosts" alongside the new permission name
 - [project-kessel/insights-rbac:api/permissions.py:2](https://github.com/project-kessel/insights-rbac/blob/d4d4.../api/permissions.py#L2)
 
-### F2: Unbounded retry loop with no backoff — ⚠️ Still open
+### [F2] Unbounded retry loop with no backoff — ⚠️ Still open
 
-Location: `api/permissions.py:4`
+**Location:** `api/permissions.py:4`
 
-Status: sync() still retries with no backoff or max-attempts check
+**Trigger:** The sync worker retries after a transient failure
+
+**Impact:** Sustained failures can keep the worker retrying indefinitely
+
+**Evidence:** The retry loop has no backoff or max-attempts check
+- [project-kessel/insights-rbac:api/permissions.py:4](https://github.com/project-kessel/insights-rbac/blob/d4d4.../api/permissions.py#L4)
+
+**Suggested fix:** Add bounded retries with backoff
+
+**Status:** sync() still retries with no backoff or max-attempts check
 
 ## New Findings
 
-### F3: New ALIAS constant is not validated against the active permission schema
+### [F3] New ALIAS constant is not validated against the active permission schema
 
-Location: `api/permissions.py:2`
+**Location:** `api/permissions.py:2`
 
-Trigger: A consumer requests inventory.read_hosts after the alias list changes again
+**Trigger:** A consumer requests inventory.read_hosts after the alias list changes again
 
-Impact: Silently grants or denies access inconsistently with the documented schema
+**Impact:** Silently grants or denies access inconsistently with the documented schema
 
-Evidence: ALIAS is a bare string with no schema validation nearby
+**Evidence:** ALIAS is a bare string with no schema validation nearby
 
 - [project-kessel/insights-rbac:api/permissions.py:2](https://github.com/project-kessel/insights-rbac/blob/d4d4.../api/permissions.py#L2)
 
-Suggested fix: Validate ALIAS entries against the permission schema at startup
+**Suggested fix:** Validate ALIAS entries against the permission schema at startup
 
 <!-- fabric-access-review:d4d4...:b2b2... -->
 ```
@@ -366,10 +410,13 @@ bot_status_update(instance_id="fabric-access-review", state="idle",
   given.
 - Idempotency: a task's `review_id` (once set) means every later cycle edits
   that same review via `PUT .../reviews/<review_id>` instead of posting a new
-  one — there is at most one review comment per PR, ever. A
-  `<!-- fabric-access-review:<head_sha>:<base_sha> -->` marker in the body
-  records which revision it currently reflects. `feedback_check` cycles never
-  touch `review_id` — they only log human replies to memory.
+  one — there is at most one review summary per PR. The inline publisher
+  upserts comments by finding ID for the current head, so retries do not
+  duplicate a thread. Summary headings use `### [F1]`; matching inline comments
+  start with `**[F1]**`. A `<!-- fabric-access-review:<head_sha>:<base_sha> -->`
+  marker in the summary records which revision it reflects. `feedback_check`
+  cycles never touch `review_id` or inline threads — they only log human replies
+  to memory.
 - Related repositories and linked docs are read-only context — they never
   expand the PR queue, and `review-context.yaml` is the only source of
   cross-repo relationships (no inferring or fetching unlisted repos).
