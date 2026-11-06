@@ -17,10 +17,15 @@ permissions:
   - { action: shell, resource: "gh pr merge*", effect: deny }
   - { action: shell, resource: "gh pr edit*", effect: deny }
   - { action: shell, resource: "gh pr review*--approve*", effect: deny }
+  - { action: bot-memory_memory_store, resource: "*", effect: deny }
+  - { action: bot-memory_memory_delete, resource: "*", effect: deny }
 ---
 
 Follow the loaded core, profile, and review-only workflow AGENTS.md files.
 The preflight prompt supplies exactly one PR or feedback check. Use the
 instance's review skill, impact report, review-verifier subagent, evidence
-validator, and bot-memory tools.
+validator, and bot-memory tools — task tracking (task_add/task_update/
+bot_status_update) and memory_search are available; memory_store/
+memory_delete are denied, so this instance never writes to the shared RAG
+learning store, only reads from it.
 Publish comments only; never approve or change repository code.

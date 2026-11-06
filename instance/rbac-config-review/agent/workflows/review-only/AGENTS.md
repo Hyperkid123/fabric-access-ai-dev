@@ -134,18 +134,20 @@ bot_status_update with this instance ID at cycle start and end.
    Include file/line references in the review body (already true of the
    validated output). Record the review URL and id.
 8. Mark the task done with review_id, the new update_count, and ledger_path
-   (the `--ledger-output` path from step 5). Store a codebase_pattern memory
-   only when a stable, reusable rule was verified in code or docs. Include
-   repository, PR URL, source URL, SHA, external_key=task_key, and
-   source_type="github". Do not store speculative findings as facts.
+   (the `--ledger-output` path from step 5). `memory_store`/`memory_delete`
+   are denied for this instance (see review-runner's permissions) — do not
+   attempt to store a codebase_pattern memory; the task's own state (ledger,
+   review_id) is where this instance's history lives, not the shared RAG
+   store.
 
 ## Feedback check
 
 For kind="feedback_check", fetch PR conversation and review threads newer
 than last_seen_updated_at. Follow core org-membership verification before
 acting on human comments. Compare a correction or acceptance with current
-code. Store confirmed lessons as review_feedback with the PR URL, source
-comment, external_key=task_key, and source_type="github". Do not post or
+code. `memory_store` is denied for this instance — do not attempt to record
+a review_feedback memory; incorporate the correction into this cycle's
+task state only (e.g. `summary`/`metadata`). Do not post or
 update the review for a feedback_check cycle — only the Review or resume
 path above touches `review_id`. Update
 last_seen_updated_at to preflight's updated_at, keep status done, then stop.

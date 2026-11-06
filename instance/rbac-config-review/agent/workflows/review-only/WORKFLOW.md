@@ -90,6 +90,21 @@ instance can all have tasks in the same memory server. `review_queue.py`'s
 instance is invisible to this one. There is no author-based or label-based
 task filtering; the `external_key` prefix *is* the isolation boundary.
 
+### Memory: task state vs. the shared RAG store
+
+`bot-memory` provides two different things, and this instance treats them
+differently. **Task state** (`task_add`/`task_update`/`bot_status_update`) —
+the SHA pairs, `review_id`, `update_count`, `ledger_path` above — is this
+instance's own bookkeeping and stays fully read/write; the pipeline can't
+function without it. The **shared RAG learning store**
+(`memory_store`/`memory_search`, categories `learning`/`review_feedback`/
+`codebase_pattern`, also readable team-wide via the read-only `team-memory`
+MCP endpoint) is read-only for this instance — `review-runner.md`'s
+permissions deny `bot-memory_memory_store` and `bot-memory_memory_delete`.
+It still searches that store for leads (AGENTS.md step 2), it just never
+writes a new learning or feedback entry to it; its own history lives in task
+state, not shared memory.
+
 ## Building context
 
 What `build_context.py` actually does, zooming into the "Context" stage box
