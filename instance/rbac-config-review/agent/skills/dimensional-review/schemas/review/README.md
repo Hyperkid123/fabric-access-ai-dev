@@ -101,6 +101,7 @@ Base fields present in both review types:
 | `source_skill` | string | no | Plugin identifier (e.g., `"productivity-utils:code-review"`) |
 | `source_repo` | string | no | Repo containing the source skill |
 | `finding` | string | yes | Description of the issue |
+| `impact` | string | no | Concrete consequence for affected users or systems if the issue remains unfixed; required by dimensional-review |
 | `evidence` | string | no | Code or context supporting the finding |
 | `suggestion` | string | no | Suggested fix or improvement |
 | `confidence` | number | yes | Confidence score (0.0 to 1.0) |

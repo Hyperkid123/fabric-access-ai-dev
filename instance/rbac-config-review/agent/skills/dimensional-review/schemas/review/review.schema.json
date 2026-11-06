@@ -139,6 +139,10 @@
           "type": "string",
           "description": "Description of the issue."
         },
+        "impact": {
+          "type": "string",
+          "description": "Concrete consequence for affected users or systems if the issue remains unfixed. Required by dimensional-review; optional here for compatibility with other review producers."
+        },
         "evidence": {
           "type": "string",
           "description": "Code or context supporting the finding."

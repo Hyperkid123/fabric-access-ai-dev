@@ -22,6 +22,7 @@
         "source_skill": "productivity-utils:code-review",
         "source_repo": "team-productivity-utils",
         "finding": "Missing parameter validation returns 500 instead of 400",
+        "impact": "Clients that omit the parameter receive a server error instead of a validation response.",
         "evidence": "request.GET['since'] accessed with bracket notation — raises KeyError (500) when absent",
         "suggestion": "Use request.GET.get('since') and return 400 if None",
         "confidence": 0.95,

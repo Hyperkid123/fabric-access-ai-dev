@@ -35,7 +35,7 @@ language_extensions:
   - sh
   - bash
 review_levels:
-  default: medium
+  default: high
   presets:
     light:
       description: Small cost-saving review focused on core correctness and security.
