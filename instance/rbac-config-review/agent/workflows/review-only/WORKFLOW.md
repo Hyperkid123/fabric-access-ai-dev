@@ -413,7 +413,9 @@ bot_status_update(instance_id="fabric-access-review", state="idle",
   one — there is at most one review summary per PR. The inline publisher
   upserts comments by finding ID for the current head, so retries do not
   duplicate a thread. Summary headings use `### [F1]`; matching inline comments
-  start with `**[F1]**`. A `<!-- fabric-access-review:<head_sha>:<base_sha> -->`
+  start with `**[F1]**`. GitHub may create separate review records for inline
+  comments; the tracked `review_id` remains the summary review's ID. A
+  `<!-- fabric-access-review:<head_sha>:<base_sha> -->`
   marker in the summary records which revision it reflects. `feedback_check`
   cycles never touch `review_id` or inline threads — they only log human replies
   to memory.

@@ -139,7 +139,7 @@ bot_status_update with this instance ID at cycle start and end.
 6. Re-read the PR head and base SHAs immediately before posting. If either
    changed, save progress and stop; preflight will select the new pair next
    cycle.
-7. Post or update exactly one GitHub review per task, using the validated
+7. Post or update exactly one GitHub review summary per task, using the validated
    body file:
    - Task metadata has no `review_id` yet (first review for this task): post
      with `gh pr review <number> --repo <owner>/<repo> --comment --body-file <review-body.md>`,
@@ -147,7 +147,7 @@ bot_status_update with this instance ID at cycle start and end.
      with `gh api repos/<owner>/<repo>/pulls/<number>/reviews --jq '[.[] | select(.user.login == env.GH_USER_NAME)] | last | .id'`.
    - Task metadata has a `review_id`: update that same review in place —
      `gh api repos/<owner>/<repo>/pulls/<number>/reviews/<review_id> --method PUT -f body="$(cat <review-body.md>)"`.
-     Never post a second review for a task that already has one.
+     Never post a second summary review for a task that already has one.
    Before inline publishing, update task metadata to keep status=in_progress and
    save review_id, review URL, the current ledger path, and update_count. This
    lets a retry update the same summary and preserve IDs already shown there.
@@ -155,9 +155,9 @@ bot_status_update with this instance ID at cycle start and end.
    --pr <number> --head-sha <head_sha> --comments <inline-comments.json>`.
    It posts each confirmed finding at its changed line, carrying the same ID
    used in the summary and all five bold finding labels. It updates an existing
-   same-head comment with the same ID instead of duplicating it. These inline
-   threads do not create another review object. If this step fails, leave the
-   task in progress.
+   same-head comment with the same ID instead of duplicating it. GitHub may
+   create separate review records for inline comments; keep tracking the summary
+   review's ID. If this step fails, leave the task in progress.
    Include file/line references in the review body (already true of the
    validated output). Record the review URL and id.
 8. Mark the task done with review_id, the new update_count (0 on its first

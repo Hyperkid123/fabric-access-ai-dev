@@ -14,7 +14,7 @@ from pathlib import Path
 def api(endpoint: str, method: str, payload: dict | None = None) -> object:
     command = ["gh", "api", endpoint]
     if payload is None:
-        command.extend(["--paginate", "--slurp", "--jq", "flatten"])
+        command.extend(["--paginate", "--slurp"])
     else:
         command.extend(["--method", method])
         with tempfile.NamedTemporaryFile("w", encoding="utf-8") as request:
@@ -29,7 +29,10 @@ def api(endpoint: str, method: str, payload: dict | None = None) -> object:
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     if result.returncode:
         raise RuntimeError(result.stderr.strip() or f"gh api failed: {endpoint}")
-    return json.loads(result.stdout) if result.stdout.strip() else []
+    pages = json.loads(result.stdout) if result.stdout.strip() else []
+    if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
+        raise RuntimeError("GitHub returned an invalid inline-comment page list")
+    return [comment for page in pages for comment in page]
 
 
 def current_head(repo: str, pr: int) -> str:
