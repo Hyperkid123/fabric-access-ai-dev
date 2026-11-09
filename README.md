@@ -80,7 +80,7 @@ memory server, and model settings.
 | `BOT_CONFIG_PATH` | `instance/rbac-config-review` |
 | `BOT_EXECUTION_ENGINE` | `coordinator` |
 | `REHOR_OPENCODE_DEPLOYMENT_CONFIG` | `instance/rbac-config-review/opencode-deployment.json` |
-| `BOT_LABEL` | `dev-bot-review` (runner label; PR label comes from `review-context.yaml`) |
+| `BOT_LABEL` | `Prokurátor Velký Bratr` (runner label; PR label comes from `review-context.yaml`) |
 
 This profile currently handles GitHub PRs. The existing `app-interface`
 GitLab repository needs an MR adapter before it can enter this review queue.
