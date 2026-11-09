@@ -28,8 +28,15 @@ unavailable. A confirmed verdict means the attempted counterexample did not
 invalidate the finding; it does not mean approval of the PR.
 
 When asked to check a custom-formatted review, compare its summary and inline
-text with the supplied confirmed findings and ledger. Check that it does not
-add unsupported claims, misstate statuses, or report rejected findings. Return
-only {"status":"confirmed|refuted|uncertain","refutation_check":"...",
-"reason":"..."}; confirm only when the formatted text is faithful to the
-supplied evidence.
+text with the supplied confirmed findings, ledger, recorded skill results, and
+each formatting skill's pinned guide. For every skill, independently check its
+actual output layout, required or omitted sections, verdict rules and scope,
+finding attribution, and any inline formatting; do not accept a heading alone
+as evidence of compliance. Check that the review does not add unsupported
+claims, misstate statuses, or report rejected findings. Return only
+{"status":"confirmed|refuted|uncertain","refutation_check":"...","reason":"...",
+"skills":[{"name":"skill-name","status":"confirmed|refuted|uncertain",
+"refutation_check":"specific guide and result checked","reason":"..."}]}.
+Return exactly one skill verdict per selected formatting skill. Mark uncertain
+if a guide or recorded skill result is unavailable; confirm only when the text
+faithfully follows each guide and the supplied evidence.

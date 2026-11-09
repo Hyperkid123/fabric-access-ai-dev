@@ -35,8 +35,8 @@ PR = {
 def test_config_accepts_direct_markdown_links_and_known_related_repos():
     config = load_config()
     assert config["review_label"] == "dev-bot-review"
-    assert config["repositories"]["insights-rbac"]["format"] == "custom"
-    assert config["repositories"]["insights-rbac"]["skills"] == ["goose-kiss-review"]
+    assert "format" not in config["repositories"]["insights-rbac"]
+    assert "skills" not in config["repositories"]["insights-rbac"]
     related = config["repositories"]["insights-rbac"]["related"]
     assert {item["id"] for item in related} >= {"rbac-config", "hbi", "kessel-inventory-api"}
     assert len(config["repositories"]["insights-rbac"]["docs"]) >= 3

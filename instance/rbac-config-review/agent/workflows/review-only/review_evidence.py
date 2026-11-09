@@ -79,6 +79,13 @@ def validate_findings(data: object, manifest: dict, impact: dict) -> list[dict]:
         category = required_text(finding.get("category"), "finding.category")
         if category not in {"cross_repo", "contract", "deploy", "invariant", "local"}:
             raise EvidenceError(f"Unsupported finding category: {category}")
+        if manifest.get("format") == "custom":
+            dimensions = finding.get("source_dimensions")
+            planned = {item["name"] for item in manifest.get("review_plan", {}).get("passes", [])}
+            if (not isinstance(dimensions, list) or not dimensions
+                    or any(not isinstance(name, str) or name not in planned for name in dimensions)
+                    or len(set(dimensions)) != len(dimensions)):
+                raise EvidenceError("Custom findings need unique source_dimensions from the review plan")
         for field in ("claim", "trigger", "impact", "suggested_fix"):
             required_text(finding.get(field), f"finding.{field}")
         location = finding.get("location")
@@ -353,6 +360,60 @@ def render_ledger(manifest: dict, ledger: list[dict], new_findings: list[dict], 
     return "\n".join(lines) + "\n"
 
 
+def custom_skill_results(manifest: dict, data: object) -> tuple[list[dict], list[dict]]:
+    """Require a recorded, completed pass and pinned guide for every formatting skill."""
+    names = manifest.get("format_skills")
+    passes = manifest.get("review_plan", {}).get("passes", [])
+    if (not isinstance(names, list) or not names or any(not isinstance(n, str) or not n for n in names)
+            or len(set(names)) != len(names)):
+        raise EvidenceError("Custom format needs unique formatting skills")
+    guides = {item.get("name"): item.get("guide_path") for item in passes if isinstance(item, dict)}
+    if any(not isinstance(guides.get(name), str) or not Path(guides[name]).is_file() for name in names):
+        raise EvidenceError("Every formatting skill needs its selected guide")
+    if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+        raise EvidenceError("Custom format needs recorded skill results")
+    by_name = {}
+    for result in data["results"]:
+        if not isinstance(result, dict):
+            raise EvidenceError("Skill result must be an object")
+        name = result.get("dimension")
+        if not isinstance(name, str) or name not in names or name in by_name:
+            raise EvidenceError("Skill results must match the formatting skills")
+        if (result.get("verdict") not in ("pass", "warn", "fail")
+                or result.get("severity") not in ("critical", "high", "medium", "low", "info")
+                or not isinstance(result.get("findings"), list)):
+            raise EvidenceError(f"Invalid skill result: {name}")
+        required_text(result.get("summary"), "skill result.summary")
+        by_name[name] = result
+    if set(by_name) != set(names):
+        raise EvidenceError("Every formatting skill needs a completed result")
+    return ([{"name": name, "guide_path": guides[name]} for name in names],
+            [by_name[name] for name in names])
+
+
+def validate_format_verdict(data: object, format_skills: list[dict]) -> None:
+    if not isinstance(data, dict) or data.get("status") != "confirmed":
+        raise EvidenceError("Custom formatting must be independently confirmed")
+    required_text(data.get("refutation_check"), "custom verdict.refutation_check")
+    required_text(data.get("reason"), "custom verdict.reason")
+    verdicts = data.get("skills")
+    if not isinstance(verdicts, list):
+        raise EvidenceError("Custom formatting needs a verdict for each skill")
+    names = {item["name"] for item in format_skills}
+    seen = set()
+    for verdict in verdicts:
+        if not isinstance(verdict, dict):
+            raise EvidenceError("Skill formatting verdict must be an object")
+        name = verdict.get("name")
+        if not isinstance(name, str) or name not in names or name in seen or verdict.get("status") != "confirmed":
+            raise EvidenceError("Every formatting skill must be independently confirmed")
+        required_text(verdict.get("refutation_check"), "skill verdict.refutation_check")
+        required_text(verdict.get("reason"), "skill verdict.reason")
+        seen.add(name)
+    if seen != names:
+        raise EvidenceError("Every formatting skill must be independently confirmed")
+
+
 def render_custom(manifest: dict, ledger: list[dict], new_findings: list[dict],
                   update_count: int, data: object) -> tuple[str, list[dict]]:
     """Validate skill-formatted text against confirmed findings and their anchors."""
@@ -361,6 +422,8 @@ def render_custom(manifest: dict, ledger: list[dict], new_findings: list[dict],
     entries = {entry["id"]: entry for entry in ledger}
     added = {finding["id"]: finding for finding in new_findings}
     seen: set[str] = set()
+    skill_sections: set[str] = set()
+    format_skills = set(manifest.get("format_skills", []))
     parts = []
     for part in data["summary_parts"]:
         if not isinstance(part, dict):
@@ -372,13 +435,25 @@ def render_custom(manifest: dict, ledger: list[dict], new_findings: list[dict],
         if not mentions <= entries.keys():
             raise EvidenceError("Custom summary mentions an unconfirmed finding")
         ident = part.get("finding_id")
+        skill = part.get("skill")
+        if skill is not None:
+            if not isinstance(skill, str) or skill not in format_skills:
+                raise EvidenceError("Custom section refers to an unselected formatting skill")
+            if ident is None:
+                if not re.search(r"^#{1,6}\s+\S", text, re.MULTILINE):
+                    raise EvidenceError("A skill section must contain a Markdown heading")
+                skill_sections.add(skill)
         if ident is not None:
             if not isinstance(ident, str) or ident not in entries or ident in seen or f"[{ident}]" not in text:
                 raise EvidenceError("Custom summary needs one identified part per ledger finding")
+            if skill is not None and skill not in entries[ident].get("source_dimensions", []):
+                raise EvidenceError("Finding does not originate from the formatting skill")
             seen.add(ident)
         parts.append(text)
     if seen != set(entries):
         raise EvidenceError("Custom summary must cover every ledger finding exactly once")
+    if skill_sections != format_skills:
+        raise EvidenceError("Custom summary needs a section for every formatting skill")
     body = "\n\n".join(parts)
     heading = re.search(r"^#{1,6}\s+.+$", body, re.MULTILINE)
     if not heading or not re.search(rf"(?<!\w)#{update_count + 1}(?!\d)", heading.group()):
@@ -428,6 +503,8 @@ def main() -> None:
                         help="Skill-formatted summary parts and inline comments")
     parser.add_argument("--custom-verdict", type=Path,
                         help="Independent verification of the custom formatting")
+    parser.add_argument("--skill-results", type=Path,
+                        help="Recorded completed passes for the selected formatting skills")
     args = parser.parse_args()
     try:
         manifest = json.loads(args.manifest.read_text())
@@ -447,10 +524,14 @@ def main() -> None:
             update_count = args.update_count + 1
         format_name = manifest.get("format", "standard")
         if format_name == "custom":
+            if not args.skill_results:
+                raise EvidenceError("Custom format requires --skill-results")
+            format_skills, skill_results = custom_skill_results(manifest, json.loads(args.skill_results.read_text()))
             if args.prepare_custom and not args.custom_format and not args.custom_verdict:
                 args.prepare_custom.write_text(json.dumps({
                     "findings": accepted, "ledger": new_ledger, "update_count": update_count,
-                    "review_number": update_count + 1,
+                    "review_number": update_count + 1, "format_skills": format_skills,
+                    "skill_results": skill_results,
                 }, indent=2))
                 print(json.dumps({"custom_input_file": str(args.prepare_custom),
                                   "confirmed": len(accepted), "update_count": update_count}))
@@ -458,14 +539,11 @@ def main() -> None:
             if not args.custom_format or not args.custom_verdict or args.prepare_custom:
                 raise EvidenceError("Custom format requires --custom-format and --custom-verdict, or --prepare-custom first")
             format_verdict = json.loads(args.custom_verdict.read_text())
-            if not isinstance(format_verdict, dict) or format_verdict.get("status") != "confirmed":
-                raise EvidenceError("Custom formatting must be independently confirmed")
-            required_text(format_verdict.get("refutation_check"), "custom verdict.refutation_check")
-            required_text(format_verdict.get("reason"), "custom verdict.reason")
+            validate_format_verdict(format_verdict, format_skills)
             body, comments = render_custom(manifest, new_ledger, accepted, update_count,
                                            json.loads(args.custom_format.read_text()))
         elif format_name == "standard":
-            if args.custom_format or args.custom_verdict or args.prepare_custom:
+            if args.custom_format or args.custom_verdict or args.prepare_custom or args.skill_results:
                 raise EvidenceError("Custom formatting options require format: custom")
             body = render_review(manifest, accepted) if args.ledger is None else render_ledger(
                 manifest, new_ledger, accepted, update_count

@@ -130,7 +130,16 @@ def test_custom_format_uses_confirmed_findings_and_preserves_skill_layout(tmp_pa
     manifest = snapshot(tmp_path)
     impact_path = tmp_path / "impact.json"
     impact_path.write_text(json.dumps(impact.make_impact_report(manifest, PATCH)))
-    manifest.update({"impact_path": str(impact_path), "format": "custom", "format_skills": ["goose-kiss-review"]})
+    guide = tmp_path / "SKILL.md"
+    guide.write_text("Use the KISS Review heading and identify simplifications.")
+    manifest.update({"impact_path": str(impact_path), "format": "custom", "format_skills": ["goose-kiss-review"],
+                     "review_plan": {"passes": [{"name": "goose-kiss-review", "guide_path": str(guide)},
+                                                  {"name": "correctness", "guide_path": str(guide)}]}})
+    report = impact.make_impact_report(manifest, PATCH)
+    with pytest.raises(evidence.EvidenceError, match="source_dimensions"):
+        evidence.validate_findings({"findings": [finding()]}, manifest, report)
+    with pytest.raises(evidence.EvidenceError, match="source_dimensions"):
+        evidence.validate_findings({"findings": [{**finding(), "source_dimensions": ["unknown"]}]}, manifest, report)
 
     def write(name, value):
         path = tmp_path / name
@@ -138,25 +147,36 @@ def test_custom_format_uses_confirmed_findings_and_preserves_skill_layout(tmp_pa
         return str(path)
 
     manifest_file = write("manifest.json", manifest)
-    findings_file = write("findings.json", {"findings": [finding("F1"), finding("F2")]})
+    findings_file = write("findings.json", {"findings": [{**finding("F1"), "source_dimensions": ["correctness"]},
+                                                        {**finding("F2"), "source_dimensions": ["goose-kiss-review"]}]})
     verdicts_file = write("verdicts.json", {"verdicts": [
         {"finding_id": "F1", "status": "confirmed", "refutation_check": "Checked fallback", "reason": "Missing"},
         {"finding_id": "F2", "status": "refuted", "refutation_check": "Checked caller", "reason": "Safe"},
     ]})
     body, ledger, inline, prepared = (tmp_path / name for name in ("review.md", "ledger.json",
                                                                     "inline.json", "prepared.json"))
+    results = write("skill-results.json", {"results": [{"dimension": "goose-kiss-review", "verdict": "pass",
+                      "severity": "info", "findings": [], "summary": "No simplifications found."}]})
     common = ["review_evidence.py", "--manifest", manifest_file, "--findings", findings_file,
               "--verdicts", verdicts_file, "--output", str(body), "--ledger-output", str(ledger),
-              "--inline-comments-output", str(inline)]
+              "--inline-comments-output", str(inline), "--skill-results", results]
+    monkeypatch.setattr(sys, "argv", common[:-2] + ["--prepare-custom", str(prepared)])
+    with pytest.raises(SystemExit):
+        evidence.main()
+    assert "requires --skill-results" in capsys.readouterr().err
+    assert not prepared.exists()
     monkeypatch.setattr(sys, "argv", common + ["--prepare-custom", str(prepared)])
     evidence.main()
     capsys.readouterr()
     accepted = json.loads(prepared.read_text())
     assert [item["id"] for item in accepted["findings"]] == ["F1"]
+    assert accepted["format_skills"] == [{"name": "goose-kiss-review", "guide_path": str(guide)}]
+    assert accepted["skill_results"][0]["verdict"] == "pass"
     assert not body.exists()
 
     custom = {"summary_parts": [
-        {"text": "## KISS & YAGNI Review #1\n\n**Verdict:** simplification needed"},
+        {"skill": "goose-kiss-review", "text": "## KISS Review: Focused change (Review #1)\n\n**Verdict:** minimal & simple"},
+        {"text": "### Other dimensional findings"},
         {"finding_id": "F1", "text": "### 🟠 [F1] Old permission disappears\n\nKeep the alias."},
     ], "inline_comments": []}
     formatted = write("custom.json", custom)
@@ -168,12 +188,14 @@ def test_custom_format_uses_confirmed_findings_and_preserves_skill_layout(tmp_pa
     capsys.readouterr()
     assert not body.exists()
     verdict = write("custom-verdict.json", {"status": "confirmed", "refutation_check": "Checked against findings",
-                                            "reason": "The wording matches the confirmed finding"})
+        "reason": "The wording matches the confirmed finding", "skills": [{"name": "goose-kiss-review",
+        "status": "confirmed", "refutation_check": "Compared the pinned guide and recorded KISS pass",
+        "reason": "The verdict and headings follow the skill and exclude the correctness finding"}]})
     monkeypatch.setattr(sys, "argv", common + ["--custom-format", formatted, "--custom-verdict", verdict])
     evidence.main()
     capsys.readouterr()
     rendered = body.read_text()
-    assert rendered.startswith("## KISS & YAGNI Review #1")
+    assert rendered.startswith("## KISS Review: Focused change (Review #1)")
     assert "### 🟠 [F1]" in rendered
     assert "**Location:**" not in rendered
     assert "/review-bot re-review" not in rendered
@@ -195,14 +217,62 @@ def test_custom_rereview_keeps_ledger_ids_and_skill_heading(tmp_path):
     manifest = snapshot(tmp_path)
     report = impact.make_impact_report(manifest, PATCH)
     ledger = evidence.apply_ledger_updates([], accept_one(manifest, report), [], manifest["pr"]["head_sha"])
+    manifest["format_skills"] = ["goose-kiss-review"]
     custom = {"summary_parts": [
-        {"text": "## KISS & YAGNI Review #2"},
+        {"skill": "goose-kiss-review", "text": "## KISS & YAGNI Review #2"},
         {"finding_id": "F1", "text": "### 🟠 [F1] Still open\n\nThe alias is missing."},
     ], "inline_comments": []}
     body, comments = evidence.render_custom(manifest, ledger, [], 1, custom)
     assert body.startswith("## KISS & YAGNI Review #2")
     assert "### 🟠 [F1]" in body
     assert comments == []
+
+
+def test_custom_format_requires_each_skill_result_and_independent_format_check(tmp_path):
+    guide = tmp_path / "skill.md"
+    guide.write_text("Use this skill's headings and verdict.")
+    manifest = {"format_skills": ["first", "second"], "review_plan": {"passes": [
+        {"name": "first", "guide_path": str(guide)}, {"name": "second", "guide_path": str(guide)}]}}
+    result = lambda name: {"dimension": name, "verdict": "pass", "severity": "info",
+                           "findings": [], "summary": "No findings."}
+    with pytest.raises(evidence.EvidenceError, match="completed result"):
+        evidence.custom_skill_results(manifest, {"results": [result("first")]})
+    with pytest.raises(evidence.EvidenceError, match="match the formatting skills"):
+        evidence.custom_skill_results(manifest, {"results": [result("first"), result("other")]})
+    guides, results = evidence.custom_skill_results(manifest, {"results": [result("second"), result("first")]})
+    assert [item["name"] for item in guides] == ["first", "second"]
+    assert [item["dimension"] for item in results] == ["first", "second"]
+    verdict = {"status": "confirmed", "refutation_check": "Checked", "reason": "Matches", "skills": [
+        {"name": "first", "status": "confirmed", "refutation_check": "Checked first guide", "reason": "Matches"}]}
+    with pytest.raises(evidence.EvidenceError, match="independently confirmed"):
+        evidence.validate_format_verdict(verdict, guides)
+    verdict["skills"].append({"name": "second", "status": "refuted", "refutation_check": "Checked second guide",
+                              "reason": "Wrong heading"})
+    with pytest.raises(evidence.EvidenceError, match="independently confirmed"):
+        evidence.validate_format_verdict(verdict, guides)
+    verdict["skills"][1]["status"] = "confirmed"
+    evidence.validate_format_verdict(verdict, guides)
+
+
+def test_custom_sections_keep_findings_in_their_originating_skill(tmp_path):
+    manifest = snapshot(tmp_path)
+    report = impact.make_impact_report(manifest, PATCH)
+    ledger = evidence.apply_ledger_updates([], accept_one(manifest, report), [], manifest["pr"]["head_sha"])
+    ledger[0]["source_dimensions"] = ["correctness"]
+    manifest["format_skills"] = ["first", "second"]
+    custom = {"summary_parts": [
+        {"skill": "first", "text": "## First layout (Review #1)"},
+        {"skill": "second", "text": "## Second layout"},
+        {"skill": "first", "finding_id": "F1", "text": "### [F1] A correctness issue"},
+    ], "inline_comments": []}
+    with pytest.raises(evidence.EvidenceError, match="does not originate"):
+        evidence.render_custom(manifest, ledger, [], 0, custom)
+    del custom["summary_parts"][2]["skill"]
+    body, _ = evidence.render_custom(manifest, ledger, [], 0, custom)
+    assert "## First layout" in body and "## Second layout" in body
+    del custom["summary_parts"][1]
+    with pytest.raises(evidence.EvidenceError, match="section for every"):
+        evidence.render_custom(manifest, ledger, [], 0, custom)
 
 
 def test_addressed_verification_with_confirmed_verdict_closes_entry(tmp_path):

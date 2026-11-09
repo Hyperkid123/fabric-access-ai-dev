@@ -67,18 +67,20 @@ Dimension passes run sequentially; `review-verifier` checks their findings.
 Each repository can list dimension names in `review-context.yaml` under
 `repositories.<repo-key>.skills`. These skills always run for that repository,
 including when their catalog entry has `default: false` or the selected level
-would exclude them. For example, `insights-rbac` explicitly includes
+would exclude them. For example, a repository may explicitly include
 `goose-kiss-review`. These names are combined with the default or focused
 dimensions without duplicates. Unknown or duplicate skill names are
 configuration errors.
 
 Set `format: custom` beside a repository's `skills` to use those skills'
-report layout for its review summary and any inline comments they specify. The runner first
-validates findings, then formats only confirmed findings and ledger entries
-using the selected skills. The verifier checks the formatted text before the
-evidence gate writes it. IDs and the review number remain present; standard
-labels and the standard footer are not added. Repositories without this setting
-use the standard format.
+report layouts for its review summary and any inline comments they specify.
+Each selected skill must complete and its actual result is saved. The runner
+formats confirmed findings using each skill's pinned guide, with a separate
+section per skill; findings from other dimensions remain clearly separate.
+An independent verifier checks each guide's layout, verdict, and attribution
+before the evidence gate writes the review. IDs and the review number remain
+present; standard labels and the standard footer are not added. Repositories
+without this setting use the standard format.
 
 ## The task queue: review_queue.py
 

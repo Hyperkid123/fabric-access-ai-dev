@@ -103,6 +103,12 @@ artifacts. Keep uncompleted command IDs for the new cycle.
 
    Record skipped or failed passes and their reasons in task state. If no
    pass completes, stop without publishing a clean review.
+   When `manifest.format` is `custom`, persist each completed pass named in
+   `manifest.format_skills` as the pass's own JSON result in a cycle-specific
+   `skill-results.json`: `{"results":[<per-pass JSON objects>]}`. Every
+   selected formatting skill must complete; if one fails or its result is
+   missing, stop without publishing a custom review. Do not infer completion
+   from loading a guide or from another dimension's findings.
    The bot's verifier, evidence gate, and publishing steps below still apply.
 
    Deduplicate the results and convert the merged findings
@@ -110,6 +116,7 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    under the snapshot directory:
    {"findings":[{"id":"F1",
    "category":"cross_repo|contract|deploy|invariant|local",
+   "source_dimensions":["correctness"],
    "location":{"repo":"owner/repo","file":"path","line":1,
    "side":"added|removed"},
    "claim":"...","trigger":"specific input or code path","impact":"...",
@@ -124,6 +131,10 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    in the location; the validator checks the pinned PR diff. All locations
    must be changed lines.
    A cross_repo finding needs a concrete related-repository code reference.
+   Set `source_dimensions` to the names of the actual passes that found it;
+   after deduplication retain the union. This field is required in custom
+   format and is retained in the ledger. Existing ledger entries without it
+   have unknown origins and must not be attributed to a formatting skill.
    Avoid duplicate comments already present on the PR.
    If a prior ledger has `open` entries, also propose exactly one re-check
    per open entry, in a second JSON file under the snapshot directory:
@@ -170,25 +181,41 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    For `manifest.format == "standard"`, use the generated standard body and
    inline comments. Their heading and bold labels follow this workflow's usual
    format. For `manifest.format == "custom"`, first run the same command
-   with `--prepare-custom <verified.json>`. It writes only confirmed
-   findings, updated ledger, and review number; it does not write a review.
-   Read the guides for the names in `manifest.format_skills` from the plan,
-   and use their requested layout to compose `custom-format.json` from only
-   the verified JSON. Keep the skill's headings and wording conventions;
+   with `--skill-results <skill-results.json> --prepare-custom <verified.json>`.
+   It writes only confirmed findings, updated ledger, review number, recorded
+   formatting-skill results, and their pinned guide paths; it does not write a
+   review. Read each of those guides and results, and use each skill's requested
+   layout to compose `custom-format.json` from only the verified JSON. Keep
+   every skill's headings, required sections, verdict rules, and wording conventions;
    do not add the standard labels, boilerplate, or re-review footer.
+   If a selected guide does not specify an output layout, stop and report that
+   custom formatting cannot be determined; do not invent a layout.
+   For multiple formatting skills, retain a separate section for each skill.
+   A skill's verdict and findings must reflect only that skill's completed pass
+   and confirmed findings attributed to it. Place findings from other or
+   unknown dimensions in a clearly separate section without presenting them as
+   that skill's findings. A merged finding attributed to multiple skills is
+   included once, under one of those skills, with its original ID. Follow each
+   guide's instructions for empty sections rather than inventing findings.
    Include the review number in the skill's first Markdown heading and the
    same `[F1]` ID wherever a finding is mentioned.
 
    The custom JSON shape is
-   `{"summary_parts":[{"text":"## Skill review #1"},{"finding_id":"F1","text":"... [F1] ..."}],"inline_comments":[{"finding_id":"F1","text":"... [F1] ..."}]}`.
+   `{"summary_parts":[{"skill":"skill-name","text":"## Skill review #1"},{"skill":"skill-name","finding_id":"F1","text":"... [F1] ..."}],"inline_comments":[{"finding_id":"F1","text":"... [F1] ..."}]}`.
+   Tag each skill's heading and any finding presented within its section with
+   `skill`. Do not tag findings from other or unknown dimensions with that skill.
    Include one identified summary part per ledger finding, including carried
    status. Add inline entries only when the selected skill calls for inline
    comments; otherwise use an empty list. Other summary parts can supply the
    skill's headings and verdict. Do not include rejected findings or bot markers.
-   Ask `review-verifier` to compare the custom JSON against `verified.json`
-   for unsupported claims and incorrect statuses. Save its single
-   `{"status":"confirmed|refuted|uncertain","refutation_check":"...","reason":"..."}`
-   verdict. Rerun the same evidence command without `--prepare-custom`, adding
+   Ask `review-verifier` to read `verified.json` and every listed guide and
+   recorded pass, then compare the custom JSON for unsupported claims,
+   incorrect statuses or attribution, and deviations from each guide's actual
+   heading, sections, verdict rules, and inline format. Save its JSON verdict:
+   `{"status":"confirmed|refuted|uncertain","refutation_check":"...","reason":"...","skills":[{"name":"skill-name","status":"confirmed|refuted|uncertain","refutation_check":"...","reason":"..."}]}`.
+   Include exactly one verdict per formatting skill; a missing, refuted, or
+   uncertain verdict blocks publication. Rerun the same evidence command without
+   `--prepare-custom`, keeping `--skill-results` and adding
    `--custom-format <custom-format.json> --custom-verdict <verdict.json>`.
    It validates IDs, anchors, review number, and the formatting verdict, then
    writes the summary and inline comments in the skill's layout. Never
