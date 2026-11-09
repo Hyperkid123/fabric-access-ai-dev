@@ -50,40 +50,20 @@ The GitHub label is `BOT_PR_LABEL`, not `BOT_LABEL`, so a copied Jira deploy tar
 
 ### Review-only instance
 
-`rbac-config-review` scans the GitHub repositories in its
-`project-repos.json` for open PRs with the `dev-bot-review` label. It reviews one
-PR per cycle and posts a comment review. It never edits or pushes code,
-approves, requests changes, merges, or creates Jira work. It tracks reviewed
-head/base SHA pairs and human feedback in the shared memory server.
-The context builder writes an impact report of changed identifiers and
-candidate usages in related repositories. A separate verifier subagent tries
-to refute each proposed finding; an evidence validator permits at most seven
-findings and renders only confirmed findings with pinned code references.
+`rbac-config-review` scans the GitHub repositories in its `project-repos.json`
+for open PRs carrying the label configured by `review-context.yaml` (currently
+`dev-bot-review`). It reviews at most one PR per cycle and publishes a GitHub
+summary with inline comments for verified findings. The workflow is read-only
+for source code. Its settings, review-context and dimensions YAML, selection
+rules, and review stages are documented in the
+[review bot README](instance/rbac-config-review/README.md).
 
-The instance's `review-context.yaml` defines related repositories and any
-number of direct GitHub `.md` file URLs for each reviewed repository. For an
-`insights-rbac` PR it initially reads RBAC Config, HBI, and Kessel Inventory
-context. Edit this file to add or remove related repositories and Markdown
-links; no runner image change is needed when the remote config repo is synced.
-The workflow bundles a `review-pr` skill.
-
-Deploy another bot workload using `deploy/rbac-config-template.yaml` with
-these instance-specific parameters. Start with `BOT_REPLICAS=0`; enable it
-after the config and GitHub label are ready. Reuse the existing shared proxy,
-memory server, and model settings.
-
-| Parameter | Value |
-|-----------|-------|
-| `BOT_NAME` | `devbot-fabric-access-review` |
-| `BOT_INSTANCE_ID` | `fabric-access-review` |
-| `BOT_CONFIG_REPO` | `https://github.com/RedHatInsights/fabric-access-ai-dev.git` |
-| `BOT_CONFIG_PATH` | `instance/rbac-config-review` |
-| `BOT_EXECUTION_ENGINE` | `coordinator` |
-| `REHOR_OPENCODE_DEPLOYMENT_CONFIG` | `instance/rbac-config-review/opencode-deployment.json` |
-| `BOT_LABEL` | `Prokurátor Velký Bratr` (runner label; PR label comes from `review-context.yaml`) |
-
-This profile currently handles GitHub PRs. The existing `app-interface`
-GitLab repository needs an MR adapter before it can enter this review queue.
+The GitHub PR label is `review-context.yaml: review_label`; deployment
+`BOT_LABEL` identifies the runner and does not control PR selection. The review
+instance configuration lives under `instance/rbac-config-review` and is
+deployed separately from the Jira and PR-label instances. This profile handles
+GitHub PRs; the `app-interface` GitLab repository needs an MR adapter before it
+can enter this queue.
 
 No Dockerfile in this repo — Konflux points at `dev-bot/Dockerfile.runner`.
 
