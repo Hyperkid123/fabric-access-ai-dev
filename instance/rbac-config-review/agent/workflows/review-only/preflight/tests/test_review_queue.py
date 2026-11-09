@@ -77,8 +77,10 @@ def test_candidate_state_transitions():
     assert queue.candidate(PR, "insights-rbac", "project-kessel/insights-rbac", active)["kind"] == "resume"
     paused = {**task, "status": "paused", "metadata": {
         "paused_sha": PR["headRefOid"], "paused_base_sha": PR["baseRefOid"],
+        "last_seen_updated_at": PR["updatedAt"],
     }}
     assert queue.candidate(PR, "insights-rbac", "project-kessel/insights-rbac", paused) is None
+    assert queue.candidate(feedback, "insights-rbac", "project-kessel/insights-rbac", paused)["kind"] == "feedback_check"
 
 
 def test_queue_skips_draft_and_own_pr(monkeypatch):
@@ -144,3 +146,35 @@ def test_main_respects_capacity_for_rereview(monkeypatch):
     queue.main()
     assert results[0][0] == "skip"
     assert "capacity" in results[0][1]
+
+
+def test_same_second_request_is_discovered_once_even_without_an_updated_timestamp(monkeypatch):
+    task = {
+        "external_key": "review-only:github:project-kessel/insights-rbac#42",
+        "status": "done",
+        "metadata": {"last_reviewed_sha": PR["headRefOid"], "last_reviewed_base_sha": PR["baseRefOid"],
+                     "last_seen_updated_at": PR["updatedAt"], "seen_rereview_comment_ids": []},
+    }
+    comment = {"id": 101, "body": "/review-bot re-review", "created_at": PR["updatedAt"],
+               "user": {"login": "alice", "type": "User"}}
+    monkeypatch.setattr(queue, "list_prs", lambda *_args: [PR])
+    monkeypatch.setattr(queue, "fetch_comments", lambda *_args: [comment])
+    chosen, errors = queue.pick_work(REPOS, {"review_label": "bot-review"}, [task])
+    assert not errors
+    assert chosen["kind"] == "feedback_check"
+    task["metadata"]["seen_rereview_comment_ids"] = [101]
+    assert queue.pick_work(REPOS, {"review_label": "bot-review"}, [task]) == (None, [])
+
+
+def test_boundary_scan_failure_is_reported(monkeypatch):
+    task = {
+        "external_key": "review-only:github:project-kessel/insights-rbac#42",
+        "status": "done",
+        "metadata": {"last_reviewed_sha": PR["headRefOid"], "last_reviewed_base_sha": PR["baseRefOid"],
+                     "last_seen_updated_at": PR["updatedAt"]},
+    }
+    monkeypatch.setattr(queue, "list_prs", lambda *_args: [PR])
+    monkeypatch.setattr(queue, "fetch_comments", lambda *_args: (_ for _ in ()).throw(RuntimeError("network error")))
+    chosen, errors = queue.pick_work(REPOS, {"review_label": "bot-review"}, [task])
+    assert chosen is None
+    assert errors == ["project-kessel/insights-rbac#42: network error"]

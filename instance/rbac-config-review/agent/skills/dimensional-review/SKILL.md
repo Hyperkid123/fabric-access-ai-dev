@@ -57,7 +57,7 @@ Use the dimensions.yaml catalog described above. First determine which dimension
 
 Applicability rules:
 
-- A dimension with languages: all matches any changed file language.
+- A dimension with languages: all matches any PR with changed files, including documentation-only or configuration-only changes.
 - Otherwise, at least one changed file must match one of the dimension languages.
 - If file_patterns are configured, at least one changed file must also match a pattern.
 - Apply any configured mutual-exclusion rules after matching languages and file patterns.

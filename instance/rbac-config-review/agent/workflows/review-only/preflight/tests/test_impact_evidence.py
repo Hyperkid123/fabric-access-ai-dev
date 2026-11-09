@@ -78,6 +78,8 @@ def test_evidence_gate_accepts_pinned_related_code_and_confirmed_verdict(tmp_pat
         "reason": "No fallback exists at the pinned revision",
     }]})
     body = evidence.render_review(manifest, accepted)
+    assert body.startswith("## Review #1\n")
+    assert "`/review-bot re-review`" in body
     assert "org/hbi/blob/" + "c" * 40 + "/client.py#L1" in body
     assert "fabric-access-review:" + "a" * 40 + ":" + "b" * 40 in body
 

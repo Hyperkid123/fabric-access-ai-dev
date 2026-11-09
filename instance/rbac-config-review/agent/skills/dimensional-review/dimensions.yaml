@@ -1,7 +1,7 @@
 # Dimensional Review catalog. Reviewer instructions live in this skill's reviewers/ directory.
 # All source paths are local to the directory containing SKILL.md.
-version: 4
-last_updated: '2026-11-06'
+version: 5
+last_updated: '2026-11-09'
 config:
   consensus_threshold: 3
   dedup_jaccard: 0.4
@@ -53,6 +53,8 @@ review_levels:
       - test-quality
       - api-contract
       - architecture
+      - documentation
+      - observability
       - db-schema
       - db-query
       - cross-repo-dependencies
@@ -86,6 +88,24 @@ dimensions:
   source:
     path: reviewers/architecture.md
     plugin: dimensional-review:architecture
+    repo: dimensional-review
+- name: documentation
+  category: general
+  languages: all
+  description: Missing, stale, or incorrect documentation for changed behavior and documentation-only changes
+  model_preference: luna
+  source:
+    path: reviewers/documentation.md
+    plugin: dimensional-review:documentation
+    repo: dimensional-review
+- name: observability
+  category: general
+  languages: all
+  description: Operational visibility gaps and useful metrics or Grafana dashboard changes
+  model_preference: luna
+  source:
+    path: reviewers/observability.md
+    plugin: dimensional-review:observability
     repo: dimensional-review
 - name: security
   category: specialist

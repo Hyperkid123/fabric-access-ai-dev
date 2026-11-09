@@ -8,6 +8,13 @@ one GitHub review summary per PR and edits it in place each cycle. It also
 posts one idempotent inline thread per actionable finding, using the same
 finding ID in the summary and inline comment.
 
+To request a fresh pass without changing the PR, an organization member can
+post a new top-level PR comment containing only `/review-bot re-review`.
+The PR must still carry the configured review label. The bot verifies the
+commenter's membership, reuses the existing finding ledger and summary, and
+increments the review number in the summary heading. The first pass is
+`Review #1`; multiple requests received before the next pass are coalesced.
+
 ## Stages
 
 ```mermaid
@@ -40,11 +47,17 @@ plain Python and run every cycle regardless of whether anything needs review.
 | Config validation | `review_config.py` | Script | Loads and strictly validates `review-context.yaml` (GitHub URL shape, `.md`-only doc links, unique ids) |
 | Context builder | `build_context.py` | Script | Checks out the PR head read-only, clones related repos at a pinned SHA, fetches configured Markdown docs at a pinned commit, writes `manifest.json` |
 | Impact analysis | `impact_analysis.py` | Script | Deterministically (no LLM) extracts changed identifiers from the diff and `git grep`-matches them in related repos → `impact.json`'s `consumer_usages` (candidates, not confirmed breakage) |
+| Re-review request detection | `rereview_requests.py` | Script | Finds exact commands in top-level comments; the runner verifies each author's organization membership before acting |
 | Review criteria | `skills/dimensional-review/SKILL.md` | **AI** (review-runner) | Multi-dimension review (correctness, security, `cross-repo-dependencies`, …) over the pinned context; deduped and consensus-scored |
 | Explanation quality | `skills/explanatory-answer/SKILL.md` | **AI** (review-runner) | How to write each finding's `claim`/`trigger`/`impact`/`evidence`/`suggested_fix` so it's specific and cited, not generic filler that happens to pass validation |
 | Verifier | `.opencode/agents/review-verifier.md` | **AI** (subagent) | Independently tries to refute every proposed finding using only pinned sources |
 | Evidence gate | `review_evidence.py` | Script | Rejects any finding whose location/reference isn't a real pinned line; caps at seven findings; requires one verdict per finding; renders the summary and inline comments with matching IDs |
 | Inline publisher | `post_inline_comments.py` | Script | Posts or updates one anchored comment per confirmed finding on the current PR head, deduplicated by finding ID |
+
+The default `high` review includes documentation and observability dimensions.
+They check whether changed behavior needs accurate documentation and whether
+useful metrics or Grafana dashboard changes are warranted. The review runner
+performs these dimension passes sequentially; its only subagent is the verifier.
 
 ## The task queue: review_queue.py
 
@@ -52,8 +65,9 @@ Runs every cycle, for $0, before any AI session. For every repo in
 `project-repos.json`, it lists open PRs carrying `review_label` and classifies
 each one — a session only launches if a PR survives all of this:
 
-1. **Filters out**: drafts, PRs authored by the bot itself, PRs missing a
-   head/base SHA, and PRs `paused` for that exact same SHA pair.
+1. **Filters out**: drafts, PRs authored by the bot itself, and PRs missing a
+   head/base SHA. A PR paused for its current SHA pair is checked only when
+   there is newer feedback; an authorized command can explicitly retry it.
 2. **Classifies survivors** into exactly one of three kinds (first match
    wins):
 
@@ -61,14 +75,26 @@ each one — a session only launches if a PR survives all of this:
    |---|---|---|
    | `resume` | Task status is `in_progress`/`pr_open`/`pr_changes` — a prior cycle was interrupted | 0 (highest) |
    | `review` | No task yet, or current head/base SHA differs from `last_reviewed_sha`/`last_reviewed_base_sha` | 1 |
-   | `feedback_check` | SHA unchanged, but `updatedAt` is newer than `last_seen_updated_at` | 2 (lowest) |
+   | `feedback_check` | SHA unchanged (including a paused task), but `updatedAt` is newer than `last_seen_updated_at`; authorized commands start a fresh review | 2 (lowest) |
 
    Everything else (already reviewed, nothing newer) is excluded.
 3. **Picks exactly one** candidate across every repo, sorted by
    `(priority, updatedAt, repo, number)` — one PR per cycle, oldest
    highest-priority first.
 4. **Capacity gate**: a brand-new `review` is skipped if 10 tasks are already
-   active, even if otherwise eligible.
+   active, even if otherwise eligible. A feedback check also checks capacity
+   before starting a requested re-review.
+
+Requests are matched exactly from new top-level comments, bounded by the
+preflight timestamp, and deduplicated using comment IDs in task state. The
+runner verifies org membership; ordinary feedback does not trigger a review.
+Requests arriving after a review starts are left for a later cycle. A validated
+but unfinished publication is recorded in task state so retries reuse its body
+and number rather than counting another review.
+When the queue otherwise has no work, it also checks comments at the stored
+timestamp boundary: GitHub's second-precision `updatedAt` can be unchanged by
+a request made in that same second. This costs a comment API call per idle,
+already-reviewed labeled PR until a request is found.
 
 ### What identifies a task
 
@@ -266,7 +292,7 @@ those (same adversarial check as new findings) before the ledger entry closes.
 entry is required; the merged result becomes the new `ledger.json`, and the
 posted review body gets two sections — *Previously Flagged* (carried entries,
 ✅ addressed or ⚠️ still open) and *New Findings* (this cycle's) — plus an
-`update #N` counter in the header. Each heading uses the finding's stable ID;
+`Review #N` heading, starting at 1. Each heading uses the finding's stable ID;
 new inline comments start with that same ID and include all five bold finding
 labels.
 
@@ -281,7 +307,7 @@ pinned line instead of a remembered impression of HBI's code.
 **First cycle** (`render_review` — no ledger yet):
 
 ```markdown
-## Review
+## Review #1
 
 ### [F1] Old permission name disappears while HBI still sends it
 
@@ -296,6 +322,8 @@ pinned line instead of a remembered impression of HBI's code.
 - [RedHatInsights/insights-host-inventory:client.py:1](https://github.com/RedHatInsights/insights-host-inventory/blob/c3c3.../client.py#L1)
 
 **Suggested fix:** Keep inventory.read_hosts as an accepted alias until HBI migrates
+
+To request another review, comment `/review-bot re-review` on this PR.
 
 <!-- fabric-access-review:a1a1...:b2b2... -->
 ```
@@ -323,7 +351,9 @@ fixed, F2 is still open, and F3 is new this cycle — the mixed case that
 shows what the status comment is actually for):
 
 ```markdown
-**Review status** — update #3 • reviewed through `d4d4d4d4d4d4`
+## Review #4
+
+Reviewed through `d4d4d4d4d4d4`.
 
 ## Previously Flagged
 
@@ -389,7 +419,7 @@ bot_status_update(instance_id="fabric-access-review", state="working",
   repo="insights-rbac")
 ...
 bot_status_update(instance_id="fabric-access-review", state="idle",
-  message="Posted review comment (update #2)")
+  message="Posted Review #3")
 ```
 
 or, when preflight found nothing to do that cycle:
@@ -417,8 +447,9 @@ bot_status_update(instance_id="fabric-access-review", state="idle",
   comments; the tracked `review_id` remains the summary review's ID. A
   `<!-- fabric-access-review:<head_sha>:<base_sha> -->`
   marker in the summary records which revision it reflects. `feedback_check`
-  cycles never touch `review_id` or inline threads — they only log human replies
-  to memory.
+  cycles do not touch `review_id` or inline threads unless an authorized
+  re-review command starts the normal review path. Ordinary human feedback is
+  recorded in task state; this instance cannot write to shared memory.
 - Related repositories and linked docs are read-only context — they never
   expand the PR queue, and `review-context.yaml` is the only source of
   cross-repo relationships (no inferring or fetching unlisted repos).

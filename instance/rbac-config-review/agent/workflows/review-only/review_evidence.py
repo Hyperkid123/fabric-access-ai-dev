@@ -160,7 +160,7 @@ def render_inline_comments(findings: list[dict]) -> list[dict]:
 
 def render_review(manifest: dict, findings: list[dict]) -> str:
     pr = manifest["pr"]
-    lines = ["## Review", ""]
+    lines = ["## Review #1", ""]
     if not findings:
         lines.append("No confirmed actionable findings from the checked scope.")
     for finding in findings:
@@ -183,6 +183,7 @@ def render_review(manifest: dict, findings: list[dict]) -> str:
                 f"- [{label}]({url})"
             )
         lines.extend(["", f"**Suggested fix:** {finding['suggested_fix']}", ""])
+    lines.extend(["", "To request another review, comment `/review-bot re-review` on this PR.", ""])
     lines.append(f"<!-- fabric-access-review:{pr['head_sha']}:{pr['base_sha']} -->")
     return "\n".join(lines) + "\n"
 
@@ -314,7 +315,7 @@ def render_ledger(manifest: dict, ledger: list[dict], new_findings: list[dict], 
     """Render the single persistent review body: previously-flagged status, then new findings."""
     pr = manifest["pr"]
     short_sha = pr["head_sha"][:12]
-    lines = [f"**Review status** — update #{update_count} • reviewed through `{short_sha}`", ""]
+    lines = [f"## Review #{update_count + 1}", "", f"Reviewed through `{short_sha}`.", ""]
     carried = [entry for entry in ledger if entry["id"] not in {f["id"] for f in new_findings}]
     lines.append("## Previously Flagged")
     lines.append("")
@@ -347,6 +348,7 @@ def render_ledger(manifest: dict, ledger: list[dict], new_findings: list[dict], 
         lines.extend(["No new confirmed findings in this revision.", ""])
     for finding in new_findings:
         lines.extend(_render_finding_block(pr, finding))
+    lines.extend(["", "To request another review, comment `/review-bot re-review` on this PR.", ""])
     lines.append(f"<!-- fabric-access-review:{pr['head_sha']}:{pr['base_sha']} -->")
     return "\n".join(lines) + "\n"
 
