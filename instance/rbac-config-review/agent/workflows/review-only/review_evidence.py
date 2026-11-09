@@ -190,9 +190,6 @@ def render_inline_comments(findings: list[dict]) -> list[dict]:
             f"**Impact:** {finding['impact']}",
             f"**Evidence:** {finding['evidence']['explanation']}",
         ]
-        diagram = diagram_markdown(finding)
-        if diagram:
-            body_parts.append(diagram)
         body_parts.extend([
             f"**Suggested fix:** {finding['suggested_fix']}",
             f"<!-- fabric-access-finding:{finding['id']} -->",
@@ -534,9 +531,6 @@ def render_custom(manifest: dict, ledger: list[dict], new_findings: list[dict],
             raise EvidenceError("Custom inline comments must identify each confirmed new finding once")
         if f"**Dimension:** {dimension_label(added[ident])}" not in text:
             raise EvidenceError("Custom inline comment must state its dimension")
-        diagram = diagram_markdown(added[ident])
-        if diagram and diagram not in text:
-            raise EvidenceError(f"Custom inline comment {ident} must include its Mermaid diagram")
         if "fabric-access-" in text or not set(re.findall(r"\bF[1-9]\d*\b", text)) <= entries.keys():
             raise EvidenceError("Custom inline comment contains a marker or unconfirmed finding")
         inline_ids.add(ident)

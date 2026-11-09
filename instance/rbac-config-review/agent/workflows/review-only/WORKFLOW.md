@@ -52,7 +52,7 @@ plain Python and run every cycle regardless of whether anything needs review.
 | Review criteria | `skills/dimensional-review/SKILL.md` | **AI** (review-runner) | Multi-dimension review (correctness, security, `cross-repo-dependencies`, …) over the pinned context; deduped and consensus-scored |
 | Explanation quality | `skills/explanatory-answer/SKILL.md` | **AI** (review-runner) | General guidance for direct answers, causal reasoning, evidence, and optional Mermaid diagrams; this workflow maps it to finding fields |
 | Verifier | `.opencode/agents/review-verifier.md` | **AI** (subagent) | Independently tries to refute every proposed finding using only pinned sources |
-| Evidence gate | `review_evidence.py` | Script | Rejects any finding whose location/reference isn't a real pinned line; caps at seven findings; requires one verdict per finding; validates optional Mermaid sources and renders them in the summary and inline comments |
+| Evidence gate | `review_evidence.py` | Script | Rejects any finding whose location/reference isn't a real pinned line; caps at seven findings; requires one verdict per finding; validates optional Mermaid sources and renders them in the review summary |
 | Inline publisher | `post_inline_comments.py` | Script | Posts or updates one anchored comment per confirmed finding on the current PR head, deduplicated by finding ID |
 
 Built-in dimensions have `default: true`; the GitHub KISS recipe is
@@ -333,7 +333,9 @@ workflow's finding schema maps a direct answer to `claim`, the circumstance to
 `evidence.refs`, the consequence to `impact`, and the correction to
 `suggested_fix`. Re-check explanations use the same causal chain. If a
 diagram materially clarifies that chain, the finding's optional `diagram`
-contains raw Mermaid source; the evidence gate wraps it for GitHub comments.
+contains raw Mermaid source; the evidence gate renders it in the review
+summary. Inline comments keep the explanation in prose so narrow threads do
+not clip diagram labels.
 
 For example, [PR #3567](https://github.com/project-kessel/insights-rbac/pull/3567#discussion_r4511659742)
 has a documentation mismatch:

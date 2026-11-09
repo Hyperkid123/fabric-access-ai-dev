@@ -130,11 +130,11 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    "claim":"...","trigger":"specific input or code path","impact":"...",
    "evidence":{"explanation":"...","refs":[{"repo":"owner/repo",
    "sha":"40-character pinned SHA","file":"path","line":1}]},
-   "suggested_fix":"...","diagram":"flowchart LR\n A --> B"}]}. The
-   optional `diagram` is raw Mermaid source without code fences. Include it
-   only when a compact graph materially clarifies cause/effect or interaction
-   already established by pinned evidence. Use only source revisions in the
-   manifest.
+   "suggested_fix":"..."}]}. An optional `diagram` contains raw Mermaid
+   source without code fences. Use it only when a compact graph materially
+   clarifies cause/effect or interaction
+   already established by pinned evidence. Omit it for direct mismatches that
+   prose explains clearly. Use only source revisions in the manifest.
    Assign a unique ID to every finding (`F1`, `F2`, ...). IDs must be unique
    across the task ledger: keep prior IDs for carried findings and allocate
    the next unused ID to each new finding. Use that same ID in the summary
@@ -149,9 +149,10 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    both summary and inline comments. Existing ledger entries without it must
    say `**Dimension:** not recorded in prior review`; do not invent an origin.
    Avoid duplicate comments already present on the PR.
-   The evidence gate renders an accepted diagram in the GitHub review summary
-   and inline comment. For `format: custom`, include the same fenced Mermaid
-   block in the identified summary part and any inline comment for that finding.
+   The evidence gate renders an accepted diagram in the GitHub review summary.
+   Keep inline comments in prose because narrow threads can clip diagram
+   labels. For `format: custom`, include the fenced Mermaid block only in
+   the identified summary part for that finding.
    If a prior ledger has `open` entries, also propose exactly one re-check
    per open entry, in a second JSON file under the snapshot directory:
    {"verifications":[{"finding_id":"F1","status":"addressed|still_open|uncertain",
