@@ -22,8 +22,23 @@ in a finding or a ledger re-check.
 
 ## Structure
 
-Four parts, mapped directly onto the finding schema — this is not a
-separate format, it is how to fill out the fields that already exist well:
+The prompts below map to the existing finding fields; they do not introduce a
+separate format or new schema keys:
+
+Make each finding read as a short explanation with an explicit chain:
+
+1. **What is wrong?** State the mismatch or failure in `claim`.
+2. **When does it happen?** Name the concrete caller or input in `trigger`.
+3. **Why does it happen?** Use `evidence.explanation` and pinned `refs` to
+   compare the expected behavior with what the code actually does.
+4. **What is the reasoning?** Connect the trigger to the implementation and
+   then to the failed expectation. Put this causal chain in
+   `evidence.explanation`; do not make the reader infer it from citations.
+5. **What is the consequence?** State the concrete result in `impact`.
+6. **What should change?** Recommend a focused correction in `suggested_fix`.
+
+These are writing prompts for the existing fields, not new JSON keys or comment
+labels. Keep evidence factual, and keep the impact distinct from the reasoning.
 
 ### 1. Claim — the direct statement
 
@@ -91,6 +106,31 @@ Each field answers a different question a reviewer would actually ask:
 *what's wrong* (claim), *when does it happen* (trigger), *so what*
 (impact), *how do you know* (evidence), *what do I do about it*
 (suggested_fix). None of them restate another field in different words.
+
+### Worked example: documented response differs from handler
+
+Use the response mismatch in [the PR #3567 review thread](https://github.com/project-kessel/insights-rbac/pull/3567#discussion_r4511659742)
+to make the causal explanation clear:
+
+- **What:** The docs show `v2_alternative` as the replacement field and put
+  human-readable guidance in `error`.
+- **When:** A client handles a blocked `create_role_v1` call according to that
+  documented response shape.
+- **Why:** The pinned handler sets `error` to
+  `tool_not_available_for_v2_org`, puts the guidance in `message`, and puts
+  the replacement tool in `use_instead`. The `list_access` rejection returns
+  `allowed_applications`, while the docs name `v2_excluded_applications`.
+- **Reasoning:** The documented lookup key `v2_alternative` is absent from the
+  actual response. A client that reads `error` for its message receives only
+  the machine code, so it cannot follow the documented path to choose or
+  explain the replacement.
+- **Impact:** Clients following the example cannot reliably select the
+  replacement tool or show the user the intended guidance.
+- **Fix:** Align the examples and field names with the handler response.
+
+In a finding, express this through the existing `claim`, `trigger`,
+`evidence.explanation`, `impact`, and `suggested_fix` fields. Do not add a
+separate `reasoning` property.
 
 ### Optional diagram
 
