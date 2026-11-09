@@ -15,9 +15,9 @@ permissions:
 Django REST Framework microservice providing Role-Based Access Control for
 console.redhat.com. Python 3.12, PostgreSQL 16, Redis, Celery.
 
-- Before changes, run the setup script (sidecar health check, `.env`, deps,
-  migrations; safe to re-run):
-  `/home/botuser/app/instance/rbac-config/agent/scripts/setup-rbac-env.sh ./repos/insights-rbac`.
+- Before changes, run the setup script in `--no-env` mode (sidecar health check,
+  dependencies, migrations; safe to re-run and does not read or write `.env`):
+  `/home/botuser/app/instance/rbac-config/agent/scripts/setup-rbac-env.sh --no-env ./repos/insights-rbac`.
   Non-zero exit → STOP, post the error output to Jira, do not proceed.
 - Multi-tenancy: all business models inherit `TenantAwareModel`; always filter
   by `request.tenant`; never return cross-tenant data.
@@ -43,10 +43,12 @@ console.redhat.com. Python 3.12, PostgreSQL 16, Redis, Celery.
   Lint with `pipenv run tox -e lint`, `pipenv run black -t py312 -l 119 rbac tests`,
   `pipenv run pre-commit run --all-files`.
 - Database: no Docker daemon — Postgres runs as a pod sidecar at
-  localhost:15432. `make run-migrations` / `make make-migrations` / `make reinitdb`
-  read `.env` from the setup step; tox manages `DATABASE_*` from container env
-  directly. Always test migrations against real PostgreSQL; migrations are
-  excluded from linting and coverage. Always mock Kafka (`MOCK_KAFKA=True`),
+  localhost:15432. Setup `--no-env` passes local `DATABASE_*` values only to its
+  own commands; it does not persist them to the agent shell. Tox reads `DATABASE_*`
+  from the container environment. For later direct Django or Make commands, use
+  runner-provided `DATABASE_*` values with `PIPENV_DONT_LOAD_ENV=1` and
+  `DJANGO_READ_DOT_ENV_FILE=False`. Always test migrations against real PostgreSQL;
+  migrations are excluded from linting and coverage. Always mock Kafka (`MOCK_KAFKA=True`),
   Kessel Inventory, and the outbox replicator in tests; never mock Django ORM
   queries, serializer validation, or URL routing.
 - Documentation: every non-trivial PR must update the repo's canonical docs or

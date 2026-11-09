@@ -1,13 +1,24 @@
 #!/bin/bash
 # Idempotent RBAC environment setup — run before working on insights-rbac.
-# Usage: setup-rbac-env.sh [path/to/insights-rbac]
+# Usage: setup-rbac-env.sh [--no-env] [path/to/insights-rbac]
 #
-# Handles: postgres/redis sidecar health checks, .env creation, pipenv install,
-# migrations, Celery worker (background daemon).
+# Handles: postgres/redis sidecar health checks, dependencies, migrations,
+# Celery worker (background daemon). Default mode configures .env; --no-env
+# passes the local sidecar configuration through process environment only.
 # Ends with a validation summary so failures are immediately visible in output.
 # Safe to run multiple times (skips steps already done).
 
 set -euo pipefail
+
+NO_ENV_FILE=0
+if [[ "${1:-}" == "--no-env" ]]; then
+    NO_ENV_FILE=1
+    shift
+fi
+if [ "$#" -gt 1 ]; then
+    echo "Usage: setup-rbac-env.sh [--no-env] [path/to/insights-rbac]" >&2
+    exit 2
+fi
 
 REPO_DIR="$(cd "${1:-.}" && pwd)"
 cd "$REPO_DIR"
@@ -52,28 +63,40 @@ for i in $(seq 1 15); do
     sleep 2
 done
 
-# ─── 3. Ensure .env exists with sidecar DATABASE_* values ─────────────────────
+# ─── 3. Configure database access ────────────────────────────────────────────
 
-if [ ! -f .env ]; then
-    cp .env.example .env
-    echo "[rbac-setup] Created .env from .env.example"
-fi
-
-patch_env() {
-    local key="$1" val="$2" tmp
-    tmp=$(mktemp)
-    if grep -q "^${key}=" .env 2>/dev/null; then
-        sed "s|^${key}=.*|${key}=${val}|" .env > "$tmp" && mv "$tmp" .env
-    else
-        cp .env "$tmp" && printf '%s=%s\n' "$key" "$val" >> "$tmp" && mv "$tmp" .env
+if [ "$NO_ENV_FILE" -eq 1 ]; then
+    echo "[rbac-setup] Using process environment; .env will not be read or written."
+    export DATABASE_HOST=localhost
+    export DATABASE_PORT=15432
+    export DATABASE_USER=postgres
+    export DATABASE_PASSWORD=postgres
+    export DATABASE_NAME=postgres
+    export PIPENV_DONT_LOAD_ENV=1
+    DJANGO_DOTENV_SETTING=False
+else
+    if [ ! -f .env ]; then
+        cp .env.example .env
+        echo "[rbac-setup] Created .env from .env.example"
     fi
-}
 
-patch_env DATABASE_HOST     localhost
-patch_env DATABASE_PORT     15432
-patch_env DATABASE_USER     postgres
-patch_env DATABASE_PASSWORD postgres
-patch_env DATABASE_NAME     postgres
+    patch_env() {
+        local key="$1" val="$2" tmp
+        tmp=$(mktemp)
+        if grep -q "^${key}=" .env 2>/dev/null; then
+            sed "s|^${key}=.*|${key}=${val}|" .env > "$tmp" && mv "$tmp" .env
+        else
+            cp .env "$tmp" && printf '%s=%s\n' "$key" "$val" >> "$tmp" && mv "$tmp" .env
+        fi
+    }
+
+    patch_env DATABASE_HOST     localhost
+    patch_env DATABASE_PORT     15432
+    patch_env DATABASE_USER     postgres
+    patch_env DATABASE_PASSWORD postgres
+    patch_env DATABASE_NAME     postgres
+    DJANGO_DOTENV_SETTING=True
+fi
 
 # ─── 4. Install Python dependencies ───────────────────────────────────────────
 
@@ -83,9 +106,9 @@ PIPENV_VERBOSITY=-1 pipenv install --dev
 # ─── 5. Apply pending migrations ──────────────────────────────────────────────
 
 echo "[rbac-setup] Checking migrations..."
-if ! DJANGO_READ_DOT_ENV_FILE=True pipenv run python rbac/manage.py migrate --check 2>/dev/null; then
+if ! DJANGO_READ_DOT_ENV_FILE="$DJANGO_DOTENV_SETTING" pipenv run python rbac/manage.py migrate --check 2>/dev/null; then
     echo "[rbac-setup] Applying pending migrations..."
-    DJANGO_READ_DOT_ENV_FILE=True pipenv run python rbac/manage.py migrate
+    DJANGO_READ_DOT_ENV_FILE="$DJANGO_DOTENV_SETTING" pipenv run python rbac/manage.py migrate
 fi
 
 # ─── 6. Start Celery worker (background daemon, idempotent) ───────────────────
@@ -103,7 +126,7 @@ else
     # pipenv searches Pipfile up the tree so it still finds $REPO_DIR/Pipfile
     (
         cd "$REPO_DIR/rbac"
-        DJANGO_READ_DOT_ENV_FILE=True \
+        DJANGO_READ_DOT_ENV_FILE="$DJANGO_DOTENV_SETTING" \
         PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus_multiproc \
         pipenv run \
             celery --broker=redis://localhost:6379/0 -A rbac.celery worker \
@@ -176,7 +199,7 @@ else
 fi
 
 # Migration status
-MIGRATION_OUT=$(DJANGO_READ_DOT_ENV_FILE=True \
+MIGRATION_OUT=$(DJANGO_READ_DOT_ENV_FILE="$DJANGO_DOTENV_SETTING" \
     pipenv run python rbac/manage.py showmigrations 2>/dev/null || true)
 # showmigrations lines have a leading space: " [X] name" — no ^ anchor
 PENDING=$(echo "$MIGRATION_OUT" | grep -c " \[ \]" || true)
@@ -191,7 +214,7 @@ fi
 # the app registers an atexit MCP-shutdown hook ("mcp: shutdown complete")
 # whose log line lands AFTER the "no issues" line, so tail -1 parsing
 # produces false failures.
-if DJANGO_CHECK_OUT=$(DJANGO_READ_DOT_ENV_FILE=True \
+if DJANGO_CHECK_OUT=$(DJANGO_READ_DOT_ENV_FILE="$DJANGO_DOTENV_SETTING" \
         pipenv run python rbac/manage.py check 2>&1); then
     ok "Django check    $(echo "$DJANGO_CHECK_OUT" | grep -o "no issues.*" | tail -1 || echo "passed")"
 else
@@ -212,7 +235,7 @@ if celery_running; then
     # timeout is 'gtimeout' on macOS (brew coreutils); fall back to no timeout
     TIMEOUT_BIN=$(command -v timeout || command -v gtimeout || true)
     PING=$(cd "$REPO_DIR/rbac" && \
-        DJANGO_READ_DOT_ENV_FILE=True \
+        DJANGO_READ_DOT_ENV_FILE="$DJANGO_DOTENV_SETTING" \
         ${TIMEOUT_BIN:+$TIMEOUT_BIN 10} pipenv run celery --broker=redis://localhost:6379/0 \
             -A rbac.celery inspect ping 2>/dev/null || true)
     if echo "$PING" | grep -q "pong"; then
@@ -224,12 +247,20 @@ else
     fail "Celery worker   not running (pid file missing or process dead)"
 fi
 
-# .env sanity — DATABASE_PORT must be 15432
-ENV_PORT=$(grep "^DATABASE_PORT=" .env 2>/dev/null | cut -d= -f2 || echo "missing")
-if [ "$ENV_PORT" = "15432" ]; then
-    ok ".env            DATABASE_PORT=$ENV_PORT"
+# Database configuration sanity
+if [ "$NO_ENV_FILE" -eq 1 ]; then
+    if [ "$DATABASE_PORT" = "15432" ]; then
+        ok "Database config  DATABASE_PORT=$DATABASE_PORT (environment)"
+    else
+        fail "Database config  DATABASE_PORT=$DATABASE_PORT (expected 15432)"
+    fi
 else
-    fail ".env            DATABASE_PORT=$ENV_PORT (expected 15432)"
+    ENV_PORT=$(grep "^DATABASE_PORT=" .env 2>/dev/null | cut -d= -f2 || echo "missing")
+    if [ "$ENV_PORT" = "15432" ]; then
+        ok ".env             DATABASE_PORT=$ENV_PORT"
+    else
+        fail ".env             DATABASE_PORT=$ENV_PORT (expected 15432)"
+    fi
 fi
 
 # ─── Result ───────────────────────────────────────────────────────────────────
