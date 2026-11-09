@@ -9,6 +9,8 @@ import re
 import subprocess
 from pathlib import Path
 
+BOT_COMMENT_PHRASE = "dev-review-bot"
+
 
 def add_payload_fields(command: list[str], payload: dict) -> None:
     """Append scalar JSON fields for the runner's remote gh API bridge."""
@@ -19,6 +21,13 @@ def add_payload_fields(command: list[str], payload: dict) -> None:
             raise ValueError("GitHub API payload fields must be scalar values")
         rendered = value if isinstance(value, str) else json.dumps(value)
         command.extend(["--field", f"{key}={rendered}"])
+
+
+def identify_comment(body: str) -> str:
+    footer = f"— {BOT_COMMENT_PHRASE}"
+    if body.rstrip().endswith(footer):
+        return body
+    return f"{body.rstrip()}\n\n{footer}"
 
 
 def api(endpoint: str, method: str = "GET", payload: dict | None = None,
@@ -53,6 +62,7 @@ def publish(repo: str, pr: int, head: str, base: str, publication: Path,
     marker = f"<!-- fabric-access-review:{head}:{base} -->"
     if not isinstance(body, str) or not body.strip() or body.count(marker) != 1:
         raise ValueError("Publication is missing its validated revision marker")
+    body = identify_comment(body)
 
     pr_state = api(f"repos/{repo}/pulls/{pr}")
     if (not isinstance(pr_state, dict) or pr_state.get("state") != "open"

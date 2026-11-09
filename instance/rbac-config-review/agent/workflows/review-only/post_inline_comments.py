@@ -9,6 +9,8 @@ import re
 import subprocess
 from pathlib import Path
 
+BOT_COMMENT_PHRASE = "dev-review-bot"
+
 
 def add_payload_fields(command: list[str], payload: dict) -> None:
     """Append scalar JSON fields for the runner's remote gh API bridge."""
@@ -19,6 +21,13 @@ def add_payload_fields(command: list[str], payload: dict) -> None:
             raise ValueError("GitHub API payload fields must be scalar values")
         rendered = value if isinstance(value, str) else json.dumps(value)
         command.extend(["--field", f"{key}={rendered}"])
+
+
+def identify_comment(body: str) -> str:
+    footer = f"— {BOT_COMMENT_PHRASE}"
+    if body.rstrip().endswith(footer):
+        return body
+    return f"{body.rstrip()}\n\n{footer}"
 
 
 def api(endpoint: str, method: str, payload: dict | None = None) -> object:
@@ -94,6 +103,7 @@ def main() -> None:
                 parser.error(f"Inline comment {ident} must include all bold finding labels")
         if f"<!-- fabric-access-finding:{ident} -->" not in body:
             parser.error(f"Inline comment {ident} is missing its idempotency marker")
+        comment["body"] = identify_comment(body)
         if not isinstance(comment.get("path"), str) or not comment["path"]:
             parser.error(f"Inline comment {ident} needs a path")
         if not isinstance(comment.get("line"), int) or comment["line"] < 1:

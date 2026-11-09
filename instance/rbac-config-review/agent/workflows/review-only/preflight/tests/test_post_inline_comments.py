@@ -16,7 +16,7 @@ def test_existing_finding_on_later_page_is_not_reposted(tmp_path, monkeypatch, c
     body = (
         "**[F1]** Claim\n\n**Dimension:** correctness\n\n**Location:** file.py:3\n\n**Trigger:** Input\n\n"
         "**Impact:** Failure\n\n**Evidence:** Source\n\n**Suggested fix:** Fix\n\n"
-        "<!-- fabric-access-finding:F1 -->"
+        "<!-- fabric-access-finding:F1 -->\n\n— dev-review-bot"
     )
     comment = {"id": "F1", "path": "file.py", "line": 3, "side": "RIGHT", "body": body}
     comments_file = tmp_path / "comments.json"
@@ -61,4 +61,4 @@ def test_skill_formatted_inline_comment_can_be_published(tmp_path, monkeypatch, 
                                       "--head-sha", head, "--comments", str(comments_file)])
     publisher.main()
     assert json.loads(capsys.readouterr().out)["posted"] == 1
-    assert calls[-1][1]["body"] == body
+    assert calls[-1][1]["body"] == f"{body}\n\n— dev-review-bot"
