@@ -197,6 +197,13 @@ the shared task-state service, so interrupted reviews can resume and later
 reviews can update the existing summary instead of creating duplicate review
 summaries.
 
+Task status follows the PR lifecycle: a review that has been published is
+`pr_open` while the PR awaits changes or merge. The queue checks tracked PRs
+for lifecycle changes; it sets `done` only after GitHub confirms a non-null
+`mergedAt`. A PR closed without merging is `paused`, and can return to
+`pr_open` if reopened. This also reconciles older tasks that were marked done
+immediately after publishing a review.
+
 Context preparation pins the PR and fetched references. Impact analysis finds
 candidate usages of changed identifiers in declared related repositories; a
 candidate is context for reviewers, not a finding by itself. Selected

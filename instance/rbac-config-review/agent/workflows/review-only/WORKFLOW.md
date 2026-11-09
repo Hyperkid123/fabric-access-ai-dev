@@ -43,7 +43,7 @@ plain Python and run every cycle regardless of whether anything needs review.
 
 | Piece | File | Script or AI | Role |
 |---|---|---|---|
-| Queue | `preflight/01-review-queue.py` → `review_queue.py` | Script | Picks one labeled PR needing `review`, `resume`, or `feedback_check`; enforces the 10-task capacity limit and per-instance task isolation (`review-only:github:` prefix) |
+| Queue | `preflight/01-review-queue.py` → `review_queue.py` | Script | Picks one labeled PR needing review/feedback, or one tracked PR needing lifecycle reconciliation; enforces per-instance task isolation (`review-only:github:` prefix) |
 | Config validation | `review_config.py` | Script | Loads and strictly validates `review-context.yaml` (GitHub URL shape, `.md`-only doc links, unique ids) |
 | Context builder | `build_context.py` | Script | Checks out the PR head read-only, clones related repos at a pinned SHA, fetches configured Markdown docs at a pinned commit, writes `manifest.json` |
 | Skill preparation | `review_skills.py` | Script | Selects dimensions, reads selected recipe YAML at a pinned commit, and generates per-run review skills |
@@ -91,23 +91,30 @@ without this setting use the standard format.
 
 ## The task queue: review_queue.py
 
-Runs every cycle, for $0, before any AI session. For every repo in
+Runs every cycle, before any AI session. For every repo in
 `project-repos.json`, it lists open PRs carrying `review_label` and classifies
-each one — a session only launches if a PR survives all of this:
+each one — a session only launches if a PR survives all of this. It also
+checks tracked tasks missing from the open labeled list for merge, closure, or
+legacy-state reconciliation:
 
 1. **Filters out**: drafts, PRs authored by the bot itself, and PRs missing a
    head/base SHA. A PR paused for its current SHA pair is checked only when
    there is newer feedback; an authorized command can explicitly retry it.
-2. **Classifies survivors** into exactly one of three kinds (first match
-   wins):
+2. **Classifies survivors** into one kind (first match wins):
 
    | Kind | Condition | Priority |
    |---|---|---|
-   | `resume` | Task status is `in_progress`/`pr_open`/`pr_changes` — a prior cycle was interrupted | 0 (highest) |
+   | `resume` | Task status is `in_progress`/`pr_changes` — a review cycle was interrupted | 0 (highest) |
    | `review` | No task yet, or current head/base SHA differs from `last_reviewed_sha`/`last_reviewed_base_sha` | 1 |
-   | `feedback_check` | SHA unchanged (including a paused task), but `updatedAt` is newer than `last_seen_updated_at`; authorized commands start a fresh review | 2 (lowest) |
+   | `feedback_check` | SHA unchanged (including `pr_open` or a paused task), but `updatedAt` is newer than `last_seen_updated_at`; authorized commands start a fresh review | 2 |
+   | `merge_complete` | GitHub confirms a tracked PR has merged | 0 |
+   | `closed_unmerged` | GitHub confirms a tracked PR closed without merging | 0 |
+   | `reconcile_open` | A legacy `done` task is still open, or a closed-unmerged PR was reopened | 3 |
 
-   Everything else (already reviewed, nothing newer) is excluded.
+   Everything else (already reviewed, nothing newer) is excluded. A posted
+   review moves the task to `pr_open`; lifecycle-only work marks it `done` only
+   after a live GitHub response includes `mergedAt`. Closed, unmerged PRs are
+   paused, not done.
 3. **Picks exactly one** candidate across every repo, sorted by
    `(priority, updatedAt, repo, number)` — one PR per cycle, oldest
    highest-priority first.
@@ -248,7 +255,7 @@ sequenceDiagram
     participant V as review-verifier
     participant GH as GitHub
 
-    Q->>R: one PR (review / resume / feedback_check)
+    Q->>R: one PR (review / resume / feedback_check / lifecycle-only)
     Note over Q,R: skipped entirely if no PR needs attention
     rect rgb(226, 227, 229)
         R->>R: build_context.py → manifest.json + impact.json
@@ -263,8 +270,12 @@ sequenceDiagram
     end
     R->>GH: create/update one review summary
     R->>GH: post/update inline threads using stable finding IDs
-    R->>Q: task_update (last_reviewed_sha, review_id, update_count)
+    R->>Q: task_update (status=pr_open, reviewed SHA, review_id, update_count)
 ```
+
+Lifecycle-only work skips context generation and review publication. It
+rechecks the live PR state, then sets `done` only for a merged PR, `paused` for
+a closed unmerged PR, or `pr_open` when reconciling an open PR.
 
 Gray bands are script (no model call); the red band is where an LLM
 actually reasons — review-runner proposing findings, and review-verifier
