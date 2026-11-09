@@ -74,12 +74,15 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    been confirmed to fix.
 3. Read `review_plan` from the manifest. `build_context.py` has already
    selected the passes and generated per-run skills for any selected recipe
-   dimensions using this bot's YAML processor. Load the explanatory-answer skill
-   (`agent/skills/explanatory-answer/SKILL.md`) for how to write every `claim`/
-   `trigger`/`impact`/`evidence.explanation`/`suggested_fix` field below (and
-   the `status_note`/re-check `explanation` in step 3's verifications) so
-   `review_evidence.py`'s structural checks aren't satisfied by generic
-   filler that happens to validate.
+   dimensions using this bot's YAML processor. Load the general
+   explanatory-answer skill (`agent/skills/explanatory-answer/SKILL.md`).
+   For this workflow, put its direct answer in `claim`, the concrete
+   circumstance in `trigger`, the why and reasoning with pinned references
+   in `evidence.explanation` and `evidence.refs`, the consequence in
+   `impact`, and the focused next step in `suggested_fix`. Apply the
+   same causal explanation to re-check `explanation` and ledger status notes.
+   The evidence gate checks structure, but the writing must explain how the
+   cited facts lead to the claim and consequence.
 
    Load the dimensional-review skill
    (`agent/skills/dimensional-review/SKILL.md`) with `--skip-learn` and run
