@@ -25,7 +25,7 @@ fabric-access-ai-dev/
 │   │       ├── instance.yaml        # workflow: ./workflows/pr-label
 │   │       ├── project-repos.json
 │   │       └── workflows/pr-label/
-│   └── rbac-config-review/       # GitHub review-only instance (label: bot-review)
+│   └── rbac-config-review/       # GitHub review-only instance (label: dev-bot-review)
 │       └── agent/
 │           ├── instance.yaml        # workflow: ./workflows/review-only
 │           ├── project-repos.json   # PR review allowlist
@@ -51,7 +51,7 @@ The GitHub label is `BOT_PR_LABEL`, not `BOT_LABEL`, so a copied Jira deploy tar
 ### Review-only instance
 
 `rbac-config-review` scans the GitHub repositories in its
-`project-repos.json` for open PRs with the `bot-review` label. It reviews one
+`project-repos.json` for open PRs with the `dev-bot-review` label. It reviews one
 PR per cycle and posts a comment review. It never edits or pushes code,
 approves, requests changes, merges, or creates Jira work. It tracks reviewed
 head/base SHA pairs and human feedback in the shared memory server.
@@ -80,7 +80,7 @@ memory server, and model settings.
 | `BOT_CONFIG_PATH` | `instance/rbac-config-review` |
 | `BOT_EXECUTION_ENGINE` | `coordinator` |
 | `REHOR_OPENCODE_DEPLOYMENT_CONFIG` | `instance/rbac-config-review/opencode-deployment.json` |
-| `BOT_LABEL` | `bot-review` (runner label; PR label comes from `review-context.yaml`) |
+| `BOT_LABEL` | `dev-bot-review` (runner label; PR label comes from `review-context.yaml`) |
 
 This profile currently handles GitHub PRs. The existing `app-interface`
 GitLab repository needs an MR adapter before it can enter this review queue.

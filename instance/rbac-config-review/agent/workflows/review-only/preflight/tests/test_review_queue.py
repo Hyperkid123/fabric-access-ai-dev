@@ -122,7 +122,7 @@ def test_queue_skips_draft_and_own_pr(monkeypatch):
 
 def test_main_fails_closed_when_memory_unavailable(monkeypatch):
     results = []
-    monkeypatch.setattr(queue, "load_config", lambda: {"review_label": "bot-review"})
+    monkeypatch.setattr(queue, "load_config", lambda: {"review_label": "dev-bot-review"})
     monkeypatch.setattr(queue, "load_project_repos", lambda: REPOS)
     monkeypatch.setattr(queue, "load_tasks", lambda: (_ for _ in ()).throw(RuntimeError("Memory unavailable")))
     monkeypatch.setattr(queue, "output_result", lambda status, content: results.append((status, content)))
@@ -147,13 +147,13 @@ def test_task_list_paginates_before_deduplicating(monkeypatch):
 def test_main_selects_one_github_pr_and_ignores_gitlab(monkeypatch):
     results = []
     calls = []
-    monkeypatch.setattr(queue, "load_config", lambda: {"review_label": "bot-review"})
+    monkeypatch.setattr(queue, "load_config", lambda: {"review_label": "dev-bot-review"})
     monkeypatch.setattr(queue, "load_project_repos", lambda: REPOS)
     monkeypatch.setattr(queue, "load_tasks", lambda: [])
     monkeypatch.setattr(queue, "list_prs", lambda repo, label: calls.append((repo, label)) or [PR])
     monkeypatch.setattr(queue, "output_result", lambda status, content: results.append((status, content)))
     queue.main()
-    assert calls == [("project-kessel/insights-rbac", "bot-review")]
+    assert calls == [("project-kessel/insights-rbac", "dev-bot-review")]
     assert results[0][0] == "start"
     assert json.loads(results[0][1])["work"]["number"] == 42
 
@@ -169,7 +169,7 @@ def test_main_respects_capacity_for_rereview(monkeypatch):
         {"external_key": f"review-only:github:org/repo#{number}", "status": "in_progress"}
         for number in range(10)
     ]
-    monkeypatch.setattr(queue, "load_config", lambda: {"review_label": "bot-review"})
+    monkeypatch.setattr(queue, "load_config", lambda: {"review_label": "dev-bot-review"})
     monkeypatch.setattr(queue, "load_project_repos", lambda: REPOS)
     monkeypatch.setattr(queue, "load_tasks", lambda: active + [done])
     monkeypatch.setattr(queue, "list_prs", lambda *_args: [PR])
@@ -191,11 +191,11 @@ def test_same_second_request_is_discovered_once_even_without_an_updated_timestam
                "user": {"login": "alice", "type": "User"}}
     monkeypatch.setattr(queue, "list_prs", lambda *_args: [PR])
     monkeypatch.setattr(queue, "fetch_comments", lambda *_args: [comment])
-    chosen, errors = queue.pick_work(REPOS, {"review_label": "bot-review"}, [task])
+    chosen, errors = queue.pick_work(REPOS, {"review_label": "dev-bot-review"}, [task])
     assert not errors
     assert chosen["kind"] == "feedback_check"
     task["metadata"]["seen_rereview_comment_ids"] = [101]
-    assert queue.pick_work(REPOS, {"review_label": "bot-review"}, [task]) == (None, [])
+    assert queue.pick_work(REPOS, {"review_label": "dev-bot-review"}, [task]) == (None, [])
 
 
 def test_boundary_scan_failure_is_reported(monkeypatch):
@@ -207,6 +207,6 @@ def test_boundary_scan_failure_is_reported(monkeypatch):
     }
     monkeypatch.setattr(queue, "list_prs", lambda *_args: [PR])
     monkeypatch.setattr(queue, "fetch_comments", lambda *_args: (_ for _ in ()).throw(RuntimeError("network error")))
-    chosen, errors = queue.pick_work(REPOS, {"review_label": "bot-review"}, [task])
+    chosen, errors = queue.pick_work(REPOS, {"review_label": "dev-bot-review"}, [task])
     assert chosen is None
     assert errors == ["project-kessel/insights-rbac#42: network error"]
