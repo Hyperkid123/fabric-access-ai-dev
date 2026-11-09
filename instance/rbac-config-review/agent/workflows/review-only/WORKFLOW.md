@@ -402,7 +402,7 @@ specific consequence, and `evidence` cites a pinned line.
 
 To request another review, comment `/review-bot re-review` on this PR.
 
-<!-- fabric-access-review:a1a1...:b2b2... -->
+<!-- dev-review-bot:fabric-access-review:a1a1...:b2b2... -->
 ```
 
 The corresponding inline comment starts with the same identifier:
@@ -422,7 +422,7 @@ The corresponding inline comment starts with the same identifier:
 
 **Suggested fix:** Keep inventory.read_hosts as an accepted alias until HBI migrates
 
-<!-- fabric-access-finding:F1 -->
+<!-- dev-review-bot:fabric-access-finding:F1 -->
 ```
 
 **Follow-up cycle, same comment edited in place** (`render_ledger` — F1 got
@@ -489,7 +489,7 @@ Reviewed through `d4d4d4d4d4d4`.
 
 **Suggested fix:** Validate ALIAS entries against the permission schema at startup
 
-<!-- fabric-access-review:d4d4...:b2b2... -->
+<!-- dev-review-bot:fabric-access-review:d4d4...:b2b2... -->
 ```
 
 These two are the PR review comment (GitHub). Separately, `bot_status_update`
@@ -534,7 +534,7 @@ bot_status_update(instance_id="fabric-access-review", state="idle",
   matching inline comments start with `**[F1]**`. Custom formats keep the same
   IDs in the selected skill's layout. GitHub may create separate review records for inline
   comments; the tracked `review_id` remains the summary review's ID. A
-  `<!-- fabric-access-review:<head_sha>:<base_sha> -->`
+  `<!-- dev-review-bot:fabric-access-review:<head_sha>:<base_sha> -->`
   marker in the summary records which revision it reflects. `feedback_check`
   cycles do not touch `review_id` or inline threads unless an authorized
   re-review command starts the normal review path. Verified member feedback is
