@@ -22,6 +22,12 @@ def required_text(value: object, field: str) -> str:
     return value.strip()
 
 
+def dimension_label(finding: dict) -> str:
+    """Show recorded pass provenance without inventing it for older ledger entries."""
+    names = finding.get("source_dimensions") or []
+    return ", ".join(names) if names else "not recorded in prior review"
+
+
 def source_root(manifest: dict, repo: str, sha: str) -> Path:
     pr = manifest["pr"]
     if repo == pr["repo"] and sha == pr["head_sha"]:
@@ -79,13 +85,13 @@ def validate_findings(data: object, manifest: dict, impact: dict) -> list[dict]:
         category = required_text(finding.get("category"), "finding.category")
         if category not in {"cross_repo", "contract", "deploy", "invariant", "local"}:
             raise EvidenceError(f"Unsupported finding category: {category}")
-        if manifest.get("format") == "custom":
+        if manifest.get("review_plan") or manifest.get("format") == "custom":
             dimensions = finding.get("source_dimensions")
             planned = {item["name"] for item in manifest.get("review_plan", {}).get("passes", [])}
             if (not isinstance(dimensions, list) or not dimensions
                     or any(not isinstance(name, str) or name not in planned for name in dimensions)
                     or len(set(dimensions)) != len(dimensions)):
-                raise EvidenceError("Custom findings need unique source_dimensions from the review plan")
+                raise EvidenceError("Findings need unique source_dimensions from the review plan")
         for field in ("claim", "trigger", "impact", "suggested_fix"):
             required_text(finding.get(field), f"finding.{field}")
         location = finding.get("location")
@@ -148,6 +154,7 @@ def render_inline_comments(findings: list[dict]) -> list[dict]:
         side = "RIGHT" if location["side"] == "added" else "LEFT"
         body = "\n\n".join([
             f"**[{finding['id']}]** {finding['claim']}",
+            f"**Dimension:** {dimension_label(finding)}",
             f"**Location:** `{location['file']}:{location['line']}`",
             f"**Trigger:** {finding['trigger']}",
             f"**Impact:** {finding['impact']}",
@@ -174,6 +181,7 @@ def render_review(manifest: dict, findings: list[dict]) -> str:
         loc = finding["location"]
         lines.extend([
             f"### [{finding['id']}] {finding['claim']}", "",
+            f"**Dimension:** {dimension_label(finding)}", "",
             f"**Location:** `{loc['file']}:{loc['line']}`", "",
             f"**Trigger:** {finding['trigger']}", "",
             f"**Impact:** {finding['impact']}", "",
@@ -308,6 +316,7 @@ def _render_finding_block(pr: dict, finding: dict) -> list[str]:
     loc = finding["location"]
     lines = [
         f"### [{finding['id']}] {finding['claim']}", "",
+        f"**Dimension:** {dimension_label(finding)}", "",
         f"**Location:** `{loc['file']}:{loc['line']}`", "",
         f"**Trigger:** {finding['trigger']}", "",
         f"**Impact:** {finding['impact']}", "",
@@ -331,6 +340,8 @@ def render_ledger(manifest: dict, ledger: list[dict], new_findings: list[dict], 
     for entry in carried:
         label = "✅ Addressed" if entry["status"] == "addressed" else "⚠️ Still open"
         lines.append(f"### [{entry['id']}] {entry['claim']} — {label}")
+        lines.append("")
+        lines.append(f"**Dimension:** {dimension_label(entry)}")
         lines.append("")
         lines.append(f"**Location:** `{entry['location']['file']}:{entry['location']['line']}`")
         lines.append("")
@@ -448,6 +459,8 @@ def render_custom(manifest: dict, ledger: list[dict], new_findings: list[dict],
                 raise EvidenceError("Custom summary needs one identified part per ledger finding")
             if skill is not None and skill not in entries[ident].get("source_dimensions", []):
                 raise EvidenceError("Finding does not originate from the formatting skill")
+            if f"**Dimension:** {dimension_label(entries[ident])}" not in text:
+                raise EvidenceError("Custom summary finding must state its dimension")
             seen.add(ident)
         parts.append(text)
     if seen != set(entries):
@@ -471,6 +484,8 @@ def render_custom(manifest: dict, ledger: list[dict], new_findings: list[dict],
         text = required_text(item.get("text"), "custom inline text")
         if not isinstance(ident, str) or ident not in added or ident in inline_ids or f"[{ident}]" not in text:
             raise EvidenceError("Custom inline comments must identify each confirmed new finding once")
+        if f"**Dimension:** {dimension_label(added[ident])}" not in text:
+            raise EvidenceError("Custom inline comment must state its dimension")
         if "fabric-access-" in text or not set(re.findall(r"\bF[1-9]\d*\b", text)) <= entries.keys():
             raise EvidenceError("Custom inline comment contains a marker or unconfirmed finding")
         inline_ids.add(ident)
@@ -488,7 +503,7 @@ def render_custom(manifest: dict, ledger: list[dict], new_findings: list[dict],
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("manifest", "findings", "verdicts", "output"):
+    for name in ("manifest", "findings", "verdicts", "publication-output"):
         parser.add_argument(f"--{name}", required=True, type=Path)
     parser.add_argument("--ledger", type=Path, help="Path to the previous cycle's ledger.json, if any")
     parser.add_argument("--verifications", type=Path, help="Proposed re-checks of open ledger entries")
@@ -551,7 +566,7 @@ def main() -> None:
             comments = render_inline_comments(accepted)
         else:
             raise EvidenceError("Unknown review format")
-        args.output.write_text(body)
+        args.publication_output.write_text(json.dumps({"body": body}, indent=2))
         if args.ledger_output:
             args.ledger_output.write_text(json.dumps(new_ledger, indent=2))
         if args.inline_comments_output:
@@ -559,7 +574,8 @@ def main() -> None:
         print(json.dumps({
             "confirmed": len(accepted), "proposed": len(findings),
             "ledger_size": len(new_ledger), "update_count": update_count,
-            "body_file": str(args.output), "ledger_file": str(args.ledger_output) if args.ledger_output else None,
+            "publication_file": str(args.publication_output),
+            "ledger_file": str(args.ledger_output) if args.ledger_output else None,
             "inline_comments_file": str(args.inline_comments_output) if args.inline_comments_output else None,
         }))
     except (EvidenceError, OSError, ValueError, KeyError) as exc:

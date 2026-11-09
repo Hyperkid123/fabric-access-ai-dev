@@ -32,8 +32,9 @@ text with the supplied confirmed findings, ledger, recorded skill results, and
 each formatting skill's pinned guide. For every skill, independently check its
 actual output layout, required or omitted sections, verdict rules and scope,
 finding attribution, and any inline formatting; do not accept a heading alone
-as evidence of compliance. Check that the review does not add unsupported
-claims, misstate statuses, or report rejected findings. Return only
+as evidence of compliance. Check that each finding states its originating
+dimension in the summary and inline comment. Check that the review does not
+add unsupported claims, misstate statuses, or report rejected findings. Return only
 {"status":"confirmed|refuted|uncertain","refutation_check":"...","reason":"...",
 "skills":[{"name":"skill-name","status":"confirmed|refuted|uncertain",
 "refutation_check":"specific guide and result checked","reason":"..."}]}.

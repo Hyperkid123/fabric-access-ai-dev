@@ -258,7 +258,7 @@ sequenceDiagram
         V->>R: verdicts.json (confirmed/refuted/uncertain)
     end
     rect rgb(226, 227, 229)
-        R->>R: review_evidence.py → review-body.md + inline-comments.json + ledger.json
+        R->>R: review_evidence.py → publication.json + inline-comments.json + ledger.json
     end
     R->>GH: create/update one review summary
     R->>GH: post/update inline threads using stable finding IDs
@@ -322,8 +322,8 @@ entry is required; the merged result becomes the new `ledger.json`, and the
 posted review body gets two sections — *Previously Flagged* (carried entries,
 ✅ addressed or ⚠️ still open) and *New Findings* (this cycle's) — plus an
 `Review #N` heading, starting at 1. Each heading uses the finding's stable ID;
-new inline comments start with that same ID and include all five bold finding
-labels.
+new inline comments start with that same ID and state the originating dimension
+alongside the other bold finding labels.
 
 ## Example comments
 
@@ -339,6 +339,8 @@ pinned line instead of a remembered impression of HBI's code.
 ## Review #1
 
 ### [F1] Old permission name disappears while HBI still sends it
+
+**Dimension:** cross-repo-dependencies
 
 **Location:** `api/permissions.py:1`
 
@@ -361,6 +363,8 @@ The corresponding inline comment starts with the same identifier:
 
 ```markdown
 **[F1]** Old permission name disappears while HBI still sends it
+
+**Dimension:** cross-repo-dependencies
 
 **Location:** `api/permissions.py:1`
 
@@ -388,6 +392,8 @@ Reviewed through `d4d4d4d4d4d4`.
 
 ### [F1] Old permission name disappears while HBI still sends it — ✅ Addressed
 
+**Dimension:** cross-repo-dependencies
+
 **Location:** `api/permissions.py:1`
 
 **Trigger:** HBI calls check_permission("inventory.read_hosts") on every host-read request
@@ -403,6 +409,8 @@ Reviewed through `d4d4d4d4d4d4`.
 - [project-kessel/insights-rbac:api/permissions.py:2](https://github.com/project-kessel/insights-rbac/blob/d4d4.../api/permissions.py#L2)
 
 ### [F2] Unbounded retry loop with no backoff — ⚠️ Still open
+
+**Dimension:** performance
 
 **Location:** `api/permissions.py:4`
 
@@ -420,6 +428,8 @@ Reviewed through `d4d4d4d4d4d4`.
 ## New Findings
 
 ### [F3] New ALIAS constant is not validated against the active permission schema
+
+**Dimension:** correctness
 
 **Location:** `api/permissions.py:2`
 

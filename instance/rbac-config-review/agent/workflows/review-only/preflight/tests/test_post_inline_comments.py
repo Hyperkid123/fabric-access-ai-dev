@@ -14,7 +14,7 @@ import post_inline_comments as publisher  # noqa: E402
 def test_existing_finding_on_later_page_is_not_reposted(tmp_path, monkeypatch, capsys):
     head = "a" * 40
     body = (
-        "**[F1]** Claim\n\n**Location:** file.py:3\n\n**Trigger:** Input\n\n"
+        "**[F1]** Claim\n\n**Dimension:** correctness\n\n**Location:** file.py:3\n\n**Trigger:** Input\n\n"
         "**Impact:** Failure\n\n**Evidence:** Source\n\n**Suggested fix:** Fix\n\n"
         "<!-- fabric-access-finding:F1 -->"
     )
@@ -45,7 +45,7 @@ def test_existing_finding_on_later_page_is_not_reposted(tmp_path, monkeypatch, c
 
 def test_skill_formatted_inline_comment_can_be_published(tmp_path, monkeypatch, capsys):
     head = "a" * 40
-    body = "🟠 [F1] Keep the alias.\n\n<!-- fabric-access-finding:F1 -->"
+    body = "🟠 [F1] Keep the alias.\n\n**Dimension:** correctness\n\n<!-- fabric-access-finding:F1 -->"
     comments_file = tmp_path / "comments.json"
     comments_file.write_text(json.dumps([{"id": "F1", "path": "file.py", "line": 3,
                                           "side": "RIGHT", "format": "custom", "body": body}]))

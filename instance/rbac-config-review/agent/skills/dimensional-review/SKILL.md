@@ -1,6 +1,6 @@
 ---
 name: dimensional-review
-description: Multi-dimension parallel code review with auto-detection, deduplication, and consensus scoring
+description: Multi-dimension code review with auto-detection, deduplication, and consensus scoring
 ---
 
 # Dimensional Review
@@ -11,7 +11,6 @@ Code review across multiple independent dimensions. Built-in dimensions have loc
 
 **Flags**:
 - `--focus dim1,dim2` — override auto-detection with explicit dimensions
-- `--format markdown|json|pr-comment` — output format (default: `markdown`)
 - `--skip-learn` — skip the LEARN phase
 - `--level <name>` — select a configured review level (defaults to `review_levels.default`; built-in levels: `light`, `medium`, `high`)
 
@@ -136,7 +135,7 @@ For each selected dimension, prepend the full local reviewer guide to a shared r
 
 This vendored copy runs inside the `rbac-config-review` instance's `review-runner` agent on OpenCode. The `review-verifier` subagent is reserved for the later evidence-refutation pass. Review dimensions run in the current session.
 
-Instead, run each applicable dimension **sequentially in the current session**: for each dimension, load its local reviewer guide, build the same prompt described below as an internal review pass over the diff and relevant source files, and produce that dimension's JSON finding object before moving to the next dimension. This trades dispatch parallelism for guaranteed availability under this runtime — the CONTEXT/DETECT/MERGE phases, dedup, and consensus scoring are unchanged; **OUTPUT (Step 5) is overridden for this instance — see 5.0 below.** `model_preference` in `dimensions.yaml` remains advisory metadata and must not be mapped to an unrelated model.
+Instead, run each applicable dimension **sequentially in the current session**: for each dimension, load its local reviewer guide, build the same prompt described below as an internal review pass over the diff and relevant source files, and produce that dimension's JSON finding object before moving to the next dimension. This trades dispatch parallelism for guaranteed availability under this runtime — the CONTEXT/DETECT/MERGE phases, dedup, and consensus scoring are unchanged; Step 5 uses the review-only workflow's GitHub publication. `model_preference` in `dimensions.yaml` remains advisory metadata and must not be mapped to an unrelated model.
 
 Each dimension's review pass must include:
 
@@ -203,13 +202,16 @@ Sort findings by:
 
 ---
 
-## Step 5 Override: rbac-config-review Workflow Output
+## Step 5: Verified GitHub comments
 
-**This instance does not use Step 5 (OUTPUT) below as written.** `review-runner` never writes `dimensional-review.md`/`.json`, never runs `--format pr-comment`, and never posts directly — `workflows/review-only/AGENTS.md` step 7 is the only place the validated summary and inline comments are posted, after `review_evidence.py` validates them. Posting any dimensional-review output directly would bypass that evidence gate and the verifier.
+The review runner hands structured findings to `workflows/review-only/AGENTS.md`.
+The verifier and `review_evidence.py` validate them; `post_review.py` and
+`post_inline_comments.py` publish the resulting GitHub comments. Do not generate
+standalone Markdown reports or alternatives files.
 
 The review-only workflow invokes this skill with `--skip-learn`: Step 6's pattern capture and alternatives report are omitted because this instance cannot persist learnings and the validated review body does not use them. This does not remove the `learning-extraction` dimension when the plan selects it.
 
-**Finding identity and label formatting:** Assign each finding a stable, unique task ID (`F1`, `F2`, ...). Keep the ID unchanged in the task ledger and every later summary; never reuse an ID already present in the ledger, including resolved entries. Give each new finding the next unused ID and include `[F1]` wherever it is mentioned. For standard format use the workflow's bold labels. For custom format follow the repository's selected skill layout and the custom verification process in `workflows/review-only/AGENTS.md`.
+**Finding identity and label formatting:** Assign each finding a stable, unique task ID (`F1`, `F2`, ...). Keep the ID unchanged in the task ledger and every later summary; never reuse an ID already present in the ledger, including resolved entries. Give each new finding the next unused ID and include `[F1]` wherever it is mentioned. State its `source_dimensions` in the summary and inline comment. For standard format use the workflow's bold labels. For custom format follow the repository's selected skill layout and the custom verification process in `workflows/review-only/AGENTS.md`.
 
 Instead, after MERGE, convert the deduped findings into the workflow's finding schema and continue its pipeline:
 
@@ -219,270 +221,6 @@ For the `architecture` dimension, include the current target repository's `revie
 2. For each, map to `{"findings":[{"id":"F1","category":...,"source_dimensions":[...],"location":{...},"claim":...,"trigger":...,"impact":...,"evidence":{"explanation":...,"refs":[...]},"suggested_fix":...}]}` as specified in `workflows/review-only/AGENTS.md` step 3's finding schema — `source_dimensions` contains the names of all passes that identified the finding before deduplication. Map the dimension finding's `impact` directly to the review finding's `impact`; a dimension finding's `file`/`line` becomes `location`, `finding` becomes `claim`, `suggestion` becomes `suggested_fix`, and `evidence` + `agreed_by`/`agreed_count` (if any) become `evidence.explanation`. `category` is `cross_repo` when the finding came from the `cross-repo-dependencies` dimension or cites a related-repo reference, otherwise map the owning dimension to `contract` (api-contract, integration), `invariant` (correctness, concurrency, db-schema, security), `deploy` (db-query, performance where deploy-affecting), or `local` (everything else).
 3. `evidence.refs` must cite only sources already pinned in the review snapshot's `manifest.json` (the PR diff itself, or a `related` entry's cloned SHA) — a dimension finding with no such pinned reference cannot produce a valid finding here; drop it rather than inventing a `sha`.
 4. Hand the resulting findings JSON to `workflows/review-only/AGENTS.md` step 4 (`review-verifier`) and step 5 (`review_evidence.py`) unchanged. Dimensional-review's own confidence/consensus scoring is a pre-filter on top of, not a replacement for, that evidence validation and refutation pass.
-
-The reference Step 5 formats below (`--format json`/`markdown`/`pr-comment`) describe the skill's upstream, standalone behavior — useful context for the finding shape, but not what this instance runs.
-
-## Step 5: Write Output (OUTPUT)
-
-**Before writing output**, print a progress line:
-```
-## Output Phase
-
-Writing <format> output with <N> deduped findings (<M> consensus)
-Output files: dimensional-review.<ext>, dimensional-review-alternatives.md
-```
-
-If writing any output file fails (e.g., permission denied, disk full), print the error immediately.
-
-### 5.1 If `--format json`:
-
-Write `dimensional-review.json` (must conform to this skill's vendored `schemas/review/review.schema.json`, mirrored from [`project-kessel/team-productivity-utils`](https://github.com/project-kessel/team-productivity-utils/blob/master/schemas/review/review.schema.json), with `review_type: "review"`):
-
-```json
-{
-  "review": {
-    "review_type": "review",
-    "pr": {
-      "number": 3114,
-      "title": "Add job to re-replicate updated workspaces",
-      "author": "example-author",
-      "url": "https://github.com/org/repo/pull/3114"
-    },
-    "generated": "2026-07-07T10:00:00Z",
-    "dimensions_dispatched": 8,
-    "total_raw_findings": 45,
-    "total_deduped_findings": 18,
-    "consensus_findings": 5,
-    "findings": [
-      {
-        "id": "1",
-        "file": "rbac/internal/views.py",
-        "line": 2706,
-        "severity": "medium",
-        "dimension": "correctness",
-        "source_skill": "dimensional-review:correctness",
-        "source_repo": "dimensional-review",
-        "finding": "Missing parameter validation returns 500 instead of 400",
-        "impact": "Clients that omit the parameter receive a server error instead of a validation response.",
-        "evidence": "request.GET['since'] accessed with bracket notation",
-        "suggestion": "Use request.GET.get('since') and return 400 if None",
-        "confidence": 0.95,
-        "agreed_by": ["correctness", "error-handling", "api-contract"],
-        "agreed_by_skills": ["dimensional-review:correctness", "dimensional-review:error-handling", "dimensional-review:api-contract"],
-        "agreed_count": 3,
-        "alternatives": [
-          {
-            "approach": "Use request.GET.get() with explicit 400 response",
-            "trade_off": "Simple, no framework overhead, but manual per-parameter",
-            "recommended": true
-          },
-          {
-            "approach": "Use DRF serializer validation with BooleanField(required=True)",
-            "trade_off": "DRF handles 400 automatically, but adds serializer layer for simple params"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-### 5.2 If `--format markdown` (default):
-
-Write `dimensional-review.md`:
-
-```markdown
-# Dimensional Review: PR #3114
-
-**PR**: [Add job to re-replicate updated workspaces](URL)
-**Author**: example-author | **Branch**: workspace-rereplicate → main
-**Changes**: +120 -45 across 8 files
-**Review level**: medium | **Dimensions**: 8 dispatched (2 general, 5 specialist, 1 meta)
-**Models**: 3 terra, 4 luna, 1 luna (medium effort)
-
-## Summary
-
-- **18 unique findings** (from 45 raw across 8 dimensions)
-- **Severity**: 0 critical, 2 high, 8 medium, 6 low, 2 info
-- **5 consensus findings** (agreed by 3+ dimensions)
-
-## Consensus Findings
-
-### 1. Missing parameter validation returns 500 instead of 400
-**Severity**: medium | **File**: `rbac/internal/views.py:2706` | **Agreed by**: 3 dimensions
-> `request.GET['since']` accessed with bracket notation...
-
-**Impact**: Clients that omit the parameter receive a server error instead of a validation response.
-
-**Suggestion**: Use `request.GET.get('since')` and return 400 if None
-
-**Alternatives**:
-1. **Use request.GET.get() with explicit 400 response** — Simple, no framework overhead, but manual per-parameter **(recommended)**
-2. **Use DRF serializer validation with BooleanField(required=True)** — DRF handles 400 automatically, but adds serializer layer for simple params
-
-*Dimensions*: correctness, error-handling, api-contract
-*Source skills*: dimensional-review:correctness, dimensional-review:error-handling, dimensional-review:api-contract
-
----
-
-## Per-Dimension Summaries
-
-### correctness (general, terra) — WARN | source: dimensional-review:correctness (LOCAL)
-3 findings (1 medium, 2 low)
-> Overall the logic is sound but parameter validation has gaps...
-
-### security (specialist, terra) — PASS | source: dimensional-review:security (LOCAL)
-1 finding (1 info)
-> No significant security issues found...
-
-...
-
-## All Findings
-
-| # | Sev | File | Finding | Impact | Dims | Source |
-|---|-----|------|---------|--------|------|--------|
-| 1 | medium | views.py:2706 | Missing param validation | Clients get a server error for a missing parameter | 3 | dimensional-review:correctness |
-| 2 | high | tasks.py:89 | Unbounded retry loop | Sustained failures can block the worker indefinitely | 2 | dimensional-review:performance |
-...
-```
-
-### 5.3 If `--format pr-comment`:
-
-Post a condensed version as a PR comment:
-
-```bash
-gh pr comment $PR_NUMBER --body "$(cat <<'EOF'
-## Dimensional Review — 8 dimensions, 18 findings
-
-**Consensus (3+ dimensions agree):**
-1. **medium** `views.py:2706` — Missing param validation *(correctness, error-handling, api-contract)* | `dimensional-review:correctness`
-   **Impact:** Clients that omit the parameter receive a server error instead of a validation response.
-2. ...
-
-**Top non-consensus:**
-3. **high** `tasks.py:89` — Unbounded retry loop *(performance)* | `dimensional-review:performance`
-   **Impact:** Sustained failures can block the worker indefinitely.
-...
-
-<details><summary>Full report</summary>
-
-[dimensional-review.md content]
-
-</details>
-EOF
-)"
-```
-
----
-
-## Step 6: Learn (LEARN, unless `--skip-learn`)
-
-Unless `--skip-learn` is set, identify reusable patterns, research alternatives for high-impact findings, and inspect meta-dimension output. Persist learnings only when a learning store and its write tool are available in this session. If they are unavailable, include candidate learnings in the final review summary and state that they were not persisted; this does not block the review.
-
-### 6.1 Capture New Patterns
-
-For each finding with severity **critical**, **high**, or **consensus** (agreed_count >= 3):
-
-1. If a learning store is available, **check for duplicates** using the configured learning tool. If similarity > 0.85, skip (already known).
-
-2. If a pattern is new, persist it only through an available, configured learning tool. Otherwise record it as a candidate in the review report:
-   - **What**: the finding pattern (e.g., "request attribute monkey-patching as implicit data bus")
-   - **Where**: which dimension(s) caught it, with source skill attribution
-   - **Consensus strength**: how many dimensions agreed (e.g., "6/14 dimensions")
-   - **Severity**: map from finding severity
-
-### 6.2 Light Alternatives Research
-
-For each **consensus finding** and each **critical/high finding**, include a brief alternatives analysis in the learning:
-
-1. **What alternatives exist** — 2-3 concrete approaches that avoid the anti-pattern or fix the issue
-2. **Trade-offs** — one sentence per alternative on when it's appropriate
-3. **Recommended approach** — which alternative is best for this codebase context
-
-This research uses the reviewer's existing knowledge — no external searches needed. The goal is to make the learning actionable: a future session encountering the same pattern gets not just "this is bad" but "here's what to do instead."
-
-### 6.3 Extract Meta-Learnings
-
-If the `learning-extraction` meta dimension ran:
-
-1. Review its output for reusable **patterns** (things done well worth repeating) and **anti-patterns** (things to avoid)
-2. For each pattern/anti-pattern with confidence >= 0.8, check the configured learning store if available
-3. Persist new ones only through an available learning tool, or list them as candidates in the report
-
-### 6.4 Report
-
-Print a summary of what was captured:
-
-```
-## LEARN Phase
-
-- **Captured**: 2 new learnings, 1 skipped (duplicate)
-- **Alternatives researched**: 2 findings
-- **Meta-learnings extracted**: 3 patterns, 1 anti-pattern
-```
-
-If nothing was captured (all clean or all duplicates), still print:
-
-```
-## LEARN Phase
-
-- **Captured**: 0 new learnings (all clean or already known)
-```
-
----
-
-### 5.4 Alternatives File (always generated)
-
-Write `dimensional-review-alternatives.md` alongside the main output. This file is generated for **all** output formats and focuses purely on alternatives research for consensus and critical/high findings.
-
-```markdown
-# Alternatives Research: PR #3114
-
-Generated from dimensional review of [PR title](URL).
-Covers consensus findings and critical/high severity findings only.
-
----
-
-## 1. Missing parameter validation returns 500 instead of 400
-
-**Severity**: medium | **Consensus**: 3 dimensions | **File**: `views.py:2706`
-
-| # | Approach | Trade-off | Recommended |
-|---|----------|-----------|:-----------:|
-| 1 | Use `request.GET.get()` with explicit 400 | Simple, no framework overhead, but manual per-parameter | Yes |
-| 2 | Use DRF serializer validation | DRF handles 400 automatically, but adds serializer layer | |
-
----
-
-## 2. ...
-```
-
----
-
-## Output Files
-
-| File | When | Contents |
-|------|------|----------|
-| `dimensional-review.json` | `--format json` | Full structured findings with metadata and alternatives |
-| `dimensional-review.md` | `--format markdown` | Human-readable summary with per-dimension breakdowns and inline alternatives |
-| `dimensional-review-alternatives.md` | always | Focused alternatives research for consensus and critical/high findings |
-| PR comment | `--format pr-comment` | Condensed summary posted to PR |
-
-### Schema Validation
-
-After writing `dimensional-review.json`, validate it against the vendored schema using this skill's own copy (resolve `SKILL_DIR` as the directory containing this `SKILL.md`, i.e. `.claude/skills/dimensional-review/` in this instance):
-
-```bash
-python3 "$SKILL_DIR/schemas/review/validate.py" dimensional-review.json
-```
-
-If `jsonschema` is not installed in this session, install it first (`pip install jsonschema`) rather than skipping validation. If validation fails, fix the JSON structure before proceeding. The vendored `schemas/review/review.schema.json` and `schemas/review/README.md` (mirrored from [`project-kessel/team-productivity-utils`](https://github.com/project-kessel/team-productivity-utils/blob/master/schemas/review/review.schema.json)) are the source of truth for the output format and full field reference.
-
-### Token Usage
-
-Include token usage or cost only when the current platform provides measured usage metadata. Do not estimate Codex usage with the Opus/Sonnet rates or invent unavailable counts; omit those fields when no reliable usage data is exposed.
-
----
 
 ## Configuration
 
@@ -514,6 +252,6 @@ Built-in reviewer guides remain inside this skill's reviewers/ directory. Dynami
 
 1. Run each dimension review sequentially in the current session per **3.3 rbac-config-review Workflow Dispatch (OpenCode)** — `review-runner` has no `collaboration.spawn_agent` or per-dimension subagent available; `review-verifier` is reserved for the workflow's evidence-refutation pass.
 2. Reviewers are read-only: do not modify the target repository, post PR comments, or persist learnings unless the user explicitly selected an output/action that authorizes it.
-3. In this instance, only `workflows/review-only/AGENTS.md` step 7 (`gh pr review --comment`, after `review_evidence.py` validation) posts to a PR — see **Step 5 Override** above. Do not use this skill's own `--format pr-comment`/`--format markdown`/`--format json` output to post or write files directly.
+3. In this instance, only `workflows/review-only/AGENTS.md` step 7 posts to a PR, using the validated JSON publication and inline-comment files after `review_evidence.py` validation. Do not create separate review reports.
 4. If a required read, agent dispatch, or output write is blocked, report the blocker and do not claim that the affected work completed.
 5. Never fabricate findings, source attribution, token usage, or cost.

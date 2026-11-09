@@ -45,12 +45,12 @@ watermark. Do not add comments arriving later to the current cycle: the next
 feedback check must see them.
 
 If `pending_publication` exists and its head/base match the preflight pair,
-resume from step 6 using its validated body, inline comments, ledger, counter,
+resume from step 6 using its validated publication JSON, inline comments, ledger, counter,
 watermark, and command IDs. Do not run the review or increment the counter
 again. If an artifact is missing, stop and report it rather than inventing a
 new count. If the pair changed, check whether the bot's tracked summary (or,
 for an initial publication, a uniquely matching bot review) has exactly the
-pending body. If so, recover its review ID and retain the pending ledger and
+pending publication's body. If so, recover its review ID and retain the pending ledger and
 counter before reviewing the new pair. Otherwise discard the unpublished
 artifacts. Keep uncompleted command IDs for the new cycle.
 
@@ -137,9 +137,10 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    must be changed lines.
    A cross_repo finding needs a concrete related-repository code reference.
    Set `source_dimensions` to the names of the actual passes that found it;
-   after deduplication retain the union. This field is required in custom
-   format and is retained in the ledger. Existing ledger entries without it
-   have unknown origins and must not be attributed to a formatting skill.
+   after deduplication retain the union. This field is required for every new
+   finding and is retained in the ledger. State `**Dimension:** <names>` in
+   both summary and inline comments. Existing ledger entries without it must
+   say `**Dimension:** not recorded in prior review`; do not invent an origin.
    Avoid duplicate comments already present on the PR.
    If a prior ledger has `open` entries, also propose exactly one re-check
    per open entry, in a second JSON file under the snapshot directory:
@@ -163,13 +164,13 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    refute every "addressed" claim among them the same way (it needs no
    verdict for "still_open"/"uncertain" claims — those assert nothing to
    refute). Save as a second verdicts file in the same shape.
-5. Write this cycle's findings, body, inline comments and output ledger in a
+5. Write this cycle's findings, publication JSON, inline comments and output ledger in a
    cycle-specific directory under the snapshot (for example `cycles/<number>`),
    distinct from the previous ledger. This also applies to repeated reviews
    of the same SHA pair. If there is no prior ledger (`ledger_path` absent from task metadata —
    this task's first review), run:
    review_evidence.py --manifest <manifest_path> --findings <findings.json>
-   --verdicts <verdicts.json> --output <review-body.md>
+   --verdicts <verdicts.json> --publication-output <publication.json>
    --ledger-output <ledger.json path under this cycle's snapshot directory>
    --inline-comments-output <inline-comments.json>
    Otherwise run the same command plus:
@@ -180,10 +181,10 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    the seven-finding limit, and one verdict per finding, and writes the
    task's ledger.json (initial ledger on the first review, merged ledger on
    later reviews). The ledger form also validates re-checks. It renders the
-   review body (flat, or with carried-forward status when a ledger is used)
+   review body inside `publication.json` (flat, or with carried-forward status)
    and reports the update_count (0 on the first review).
 
-   For `manifest.format == "standard"`, use the generated standard body and
+   For `manifest.format == "standard"`, use the generated publication JSON and
    inline comments. Their heading and bold labels follow this workflow's usual
    format. For `manifest.format == "custom"`, first run the same command
    with `--skill-results <skill-results.json> --prepare-custom <verified.json>`.
@@ -210,7 +211,9 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    Tag each skill's heading and any finding presented within its section with
    `skill`. Do not tag findings from other or unknown dimensions with that skill.
    Include one identified summary part per ledger finding, including carried
-   status. Add inline entries only when the selected skill calls for inline
+   status. Include `**Dimension:** <names>` in each identified summary part
+   and each inline entry, even when the selected skill uses its own layout.
+   Add inline entries only when the selected skill calls for inline
    comments; otherwise use an empty list. Other summary parts can supply the
    skill's headings and verdict. Do not include rejected findings or bot markers.
    Ask `review-verifier` to read `verified.json` and every listed guide and
@@ -223,34 +226,33 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    `--prepare-custom`, keeping `--skill-results` and adding
    `--custom-format <custom-format.json> --custom-verdict <verdict.json>`.
    It validates IDs, anchors, review number, and the formatting verdict, then
-   writes the summary and inline comments in the skill's layout. Never
+   writes the publication JSON and inline comments in the skill's layout. Never
    hand-edit the validated output or post an unvalidated draft.
 6. Before posting, persist `pending_publication` with this head/base, the
-   validated body, inline comments, output ledger and manifest paths, the
+   validated publication JSON, inline comments, output ledger and manifest paths, the
    returned update_count, the cycle watermark, and the command IDs processed
    in that window. Leave the task in progress. Re-read the PR head and base
    SHAs immediately before posting. If either
    changed, save progress and stop; preflight will select the new pair next
    cycle.
-7. Post or update exactly one GitHub review summary per task, using the validated
-   body file:
-   - Task metadata has no `review_id` yet (first review for this task): first
-     search the bot's existing reviews for the exact body marker for this
-     head/base pair. If one exists, recover its ID; if more than one exists,
-     stop and report the ambiguity. Otherwise post
-     with `gh pr review <number> --repo <owner>/<repo> --comment --body-file <review-body.md>`,
-     never `--approve`/`--request-changes`; then resolve the new review's id
-     with `gh api repos/<owner>/<repo>/pulls/<number>/reviews --jq '[.[] | select(.user.login == env.GH_USER_NAME)] | last | .id'`.
-   - Task metadata has a `review_id`: update that same review in place —
-     `gh api repos/<owner>/<repo>/pulls/<number>/reviews/<review_id> --method PUT -f body="$(cat <review-body.md>)"`.
-     Never post a second summary review for a task that already has one.
+7. Post or update exactly one GitHub review summary per task from the validated
+   JSON payload:
+   `python3 workflows/review-only/post_review.py --repo <owner>/<repo>
+   --pr <number> --head-sha <head_sha> --base-sha <base_sha>
+   --publication <publication.json>`.
+   If task metadata already has a `review_id`, also pass `--review-id <review_id>`.
+   The script verifies the live PR revision, recovers a uniquely matching
+   summary review by its marker on a first publication retry, and uses GitHub's
+   comment-review API. Never approve, request changes, or post a second summary
+   when a tracked review exists. Read `review_id` and `review_url` from its JSON output.
    Before inline publishing, update task metadata to keep status=in_progress and
    save review_id and review URL. Keep `pending_publication` until all inline
-   comments are published so a retry reuses the same body and count.
+   comments are published so a retry reuses the same validated payload and count.
    Then run `python3 workflows/review-only/post_inline_comments.py --repo <owner>/<repo>
    --pr <number> --head-sha <head_sha> --comments <inline-comments.json>`.
    It posts each confirmed finding at its changed line, carrying the same ID
-   used in the summary. The standard format uses all five bold finding labels;
+   used in the summary. The standard format uses all bold finding labels,
+   including `Dimension`;
    custom format uses the selected skill's layout. It updates an existing
    same-head comment with the same ID instead of duplicating it. GitHub may
    create separate review records for inline comments; keep tracking the summary

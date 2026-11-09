@@ -160,7 +160,7 @@ def build(repo_key: str, pr_number: int, expected_head: str, expected_base: str,
         result = {"id": doc["id"], "configured_url": doc["url"]}
         try:
             content, permalink = fetch_doc(doc["url"])
-            path = snapshot / f"{doc['id']}.md"
+            path = snapshot / f"{doc['id']}.txt"
             path.write_text(content)
             result.update({"path": str(path), "url": permalink, "bytes": len(content.encode())})
         except (ContextError, subprocess.TimeoutExpired, OSError, UnicodeError, ValueError) as exc:

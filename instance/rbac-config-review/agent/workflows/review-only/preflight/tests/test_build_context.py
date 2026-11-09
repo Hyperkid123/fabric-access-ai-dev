@@ -96,6 +96,8 @@ def test_build_snapshots_related_code_and_any_number_of_docs(tmp_path, monkeypat
     monkeypatch.setattr(context, "fetch_doc", lambda url: ("# Doc\n", url.replace("/main/", f"/{'d' * 40}/")))
     result = context.build("insights-rbac", 42, sha, "b" * 40, tmp_path / "snapshots")
     assert len(result["docs"]) == 3
+    assert all(Path(doc["path"]).suffix == ".txt" for doc in result["docs"])
+    assert all(Path(doc["path"]).read_text() == "# Doc\n" for doc in result["docs"])
     assert result["related"][0]["sha"] == "c" * 40
     assert result["related"][0]["matches"] == ["permissions.py:12:inventory.read_hosts"]
     assert result["pr"]["checkout_path"].endswith("project-kessel__insights-rbac--42")

@@ -93,8 +93,8 @@ def test_repository_skill_runs_despite_default_and_level_and_receives_pinned_con
     assert names == ["correctness", "security", "db-schema", "goose-kiss-review"]
     custom = plan["passes"][-1]
     skill = Path(custom["guide_path"])
-    frontmatter = yaml.safe_load(skill.read_text().split("---", 2)[1])
-    assert frontmatter["name"] == "goose-kiss-review"
+    assert skill.name == "guide.txt"
+    assert "Name: goose-kiss-review" in skill.read_text()
     assert "c" * 40 + "..." + "b" * 40 in skill.read_text()
     assert "RHCLOUD-42" in skill.read_text()
     assert "Review PR 42" in skill.read_text()
