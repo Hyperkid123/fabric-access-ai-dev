@@ -1,6 +1,6 @@
 ---
 name: explanatory-answer
-description: Compose a finding's or ledger re-check's explanatory text (claim, evidence, impact, trigger, suggested_fix, status_note) as a structured, evidenced explanation instead of vague prose. Use this whenever writing those fields in workflows/review-only, before handing a finding to review_evidence.py.
+description: Compose evidenced finding explanations and optional Mermaid diagrams, plus ledger re-check status notes, for the review-only workflow.
 ---
 
 # Explanatory Answer
@@ -91,6 +91,26 @@ Each field answers a different question a reviewer would actually ask:
 *what's wrong* (claim), *when does it happen* (trigger), *so what*
 (impact), *how do you know* (evidence), *what do I do about it*
 (suggested_fix). None of them restate another field in different words.
+
+### Optional diagram
+
+Add a `diagram` field containing raw Mermaid source only when a small graph
+makes the causal path or data flow materially easier to understand than prose.
+Omit it for a direct mismatch or one-step issue. Keep it to a few nodes and
+use only paths and actors established by the pinned evidence; do not add
+inferred branches or numeric values. Prefer `flowchart LR` for cause and effect
+or `sequenceDiagram` for interactions. Do not include Markdown fences: the
+review publisher validates the source and wraps it in a Mermaid block in the
+GitHub summary and inline comment.
+
+```json
+{
+  "diagram": "flowchart LR\n  A[Request] --> B[New guard]\n  B --> C[Observed failure]"
+}
+```
+
+The diagram supplements the claim, trigger, impact, and evidence. It never
+replaces them. Leave the field out when a graph adds decoration or repetition.
 
 ## Anti-patterns
 

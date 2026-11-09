@@ -16,6 +16,35 @@ class EvidenceError(ValueError):
     pass
 
 
+_MERMAID_HEADER = re.compile(r"^(?:flowchart|graph|sequenceDiagram|stateDiagram-v2)\b")
+_MAX_DIAGRAM_CHARS = 1500
+
+
+def validate_diagram(value: object) -> str | None:
+    """Validate optional Mermaid source before embedding it in GitHub Markdown."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise EvidenceError("finding.diagram must be Mermaid source text")
+    diagram = value.strip()
+    if (not diagram or len(diagram) > _MAX_DIAGRAM_CHARS or "```" in diagram
+            or any(ord(char) < 32 and char not in "\n\t" for char in diagram)):
+        raise EvidenceError("finding.diagram is empty, too long, or contains unsafe Markdown/control characters")
+    first_line = next((line.strip() for line in diagram.splitlines() if line.strip()), "")
+    if not _MERMAID_HEADER.match(first_line):
+        raise EvidenceError("finding.diagram must start with Mermaid flowchart, graph, sequenceDiagram, or stateDiagram-v2")
+    return diagram
+
+
+def diagram_markdown(finding: dict) -> str | None:
+    """Wrap stored Mermaid source for GitHub's Markdown renderer."""
+    diagram = finding.get("diagram")
+    if not diagram:
+        return None
+    fence = chr(96) * 3
+    return f"{fence}mermaid\n{diagram}\n{fence}"
+
+
 def required_text(value: object, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise EvidenceError(f"{field} must be non-empty text")
@@ -94,6 +123,7 @@ def validate_findings(data: object, manifest: dict, impact: dict) -> list[dict]:
                 raise EvidenceError("Findings need unique source_dimensions from the review plan")
         for field in ("claim", "trigger", "impact", "suggested_fix"):
             required_text(finding.get(field), f"finding.{field}")
+        diagram = validate_diagram(finding.get("diagram"))
         location = finding.get("location")
         if not isinstance(location, dict):
             raise EvidenceError("finding.location must be an object")
@@ -122,7 +152,7 @@ def validate_findings(data: object, manifest: dict, impact: dict) -> list[dict]:
             raise EvidenceError("Every finding needs a pinned code reference")
         if category == "cross_repo" and not any(ref["repo"] != manifest["pr"]["repo"] for ref in refs):
             raise EvidenceError("Cross-repository finding needs a related-repository code reference")
-        validated.append({**finding, "location": location_ref, "refs": refs})
+        validated.append({**finding, "diagram": diagram, "location": location_ref, "refs": refs})
     return validated
 
 
@@ -152,16 +182,22 @@ def render_inline_comments(findings: list[dict]) -> list[dict]:
     for finding in findings:
         location = finding["location"]
         side = "RIGHT" if location["side"] == "added" else "LEFT"
-        body = "\n\n".join([
+        body_parts = [
             f"**[{finding['id']}]** {finding['claim']}",
             f"**Dimension:** {dimension_label(finding)}",
             f"**Location:** `{location['file']}:{location['line']}`",
             f"**Trigger:** {finding['trigger']}",
             f"**Impact:** {finding['impact']}",
             f"**Evidence:** {finding['evidence']['explanation']}",
+        ]
+        diagram = diagram_markdown(finding)
+        if diagram:
+            body_parts.append(diagram)
+        body_parts.extend([
             f"**Suggested fix:** {finding['suggested_fix']}",
             f"<!-- fabric-access-finding:{finding['id']} -->",
         ])
+        body = "\n\n".join(body_parts)
         comments.append({
             "id": finding["id"],
             "path": location["file"],
@@ -197,6 +233,9 @@ def render_review(manifest: dict, findings: list[dict]) -> str:
             lines.append(
                 f"- [{label}]({url})"
             )
+        diagram = diagram_markdown(finding)
+        if diagram:
+            lines.extend(["", diagram])
         lines.extend(["", f"**Suggested fix:** {finding['suggested_fix']}", ""])
     lines.extend(["", "To request another review, comment `/review-bot re-review` on this PR.", ""])
     lines.append(f"<!-- fabric-access-review:{pr['head_sha']}:{pr['base_sha']} -->")
@@ -323,6 +362,9 @@ def _render_finding_block(pr: dict, finding: dict) -> list[str]:
         f"**Evidence:** {finding['evidence']['explanation']}", "",
     ]
     lines.extend(f"- {_ref_link(pr, ref)}" for ref in finding["refs"])
+    diagram = diagram_markdown(finding)
+    if diagram:
+        lines.extend(["", diagram])
     lines.extend(["", f"**Suggested fix:** {finding['suggested_fix']}", ""])
     return lines
 
@@ -351,6 +393,9 @@ def render_ledger(manifest: dict, ledger: list[dict], new_findings: list[dict], 
         lines.append("")
         lines.append(f"**Evidence:** {entry['evidence']['explanation']}")
         lines.extend(f"- {_ref_link(pr, ref)}" for ref in entry["refs"])
+        diagram = diagram_markdown(entry)
+        if diagram:
+            lines.extend(["", diagram])
         lines.extend(["", f"**Suggested fix:** {entry['suggested_fix']}", ""])
         if entry["status"] == "addressed" and entry.get("status_evidence"):
             lines.append(f"**Status evidence:** {entry['status_evidence']['explanation']}")
@@ -461,6 +506,9 @@ def render_custom(manifest: dict, ledger: list[dict], new_findings: list[dict],
                 raise EvidenceError("Finding does not originate from the formatting skill")
             if f"**Dimension:** {dimension_label(entries[ident])}" not in text:
                 raise EvidenceError("Custom summary finding must state its dimension")
+            diagram = diagram_markdown(entries[ident])
+            if diagram and diagram not in text:
+                raise EvidenceError(f"Custom summary finding {ident} must include its Mermaid diagram")
             seen.add(ident)
         parts.append(text)
     if seen != set(entries):
@@ -486,6 +534,9 @@ def render_custom(manifest: dict, ledger: list[dict], new_findings: list[dict],
             raise EvidenceError("Custom inline comments must identify each confirmed new finding once")
         if f"**Dimension:** {dimension_label(added[ident])}" not in text:
             raise EvidenceError("Custom inline comment must state its dimension")
+        diagram = diagram_markdown(added[ident])
+        if diagram and diagram not in text:
+            raise EvidenceError(f"Custom inline comment {ident} must include its Mermaid diagram")
         if "fabric-access-" in text or not set(re.findall(r"\bF[1-9]\d*\b", text)) <= entries.keys():
             raise EvidenceError("Custom inline comment contains a marker or unconfirmed finding")
         inline_ids.add(ident)

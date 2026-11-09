@@ -50,9 +50,9 @@ plain Python and run every cycle regardless of whether anything needs review.
 | Impact analysis | `impact_analysis.py` | Script | Deterministically (no LLM) extracts changed identifiers from the diff and `git grep`-matches them in related repos → `impact.json`'s `consumer_usages` (candidates, not confirmed breakage) |
 | Re-review request detection | `rereview_requests.py` | Script | Finds exact commands in top-level comments; the runner verifies each author's organization membership before acting |
 | Review criteria | `skills/dimensional-review/SKILL.md` | **AI** (review-runner) | Multi-dimension review (correctness, security, `cross-repo-dependencies`, …) over the pinned context; deduped and consensus-scored |
-| Explanation quality | `skills/explanatory-answer/SKILL.md` | **AI** (review-runner) | How to write each finding's `claim`/`trigger`/`impact`/`evidence`/`suggested_fix` so it's specific and cited, not generic filler that happens to pass validation |
+| Explanation quality | `skills/explanatory-answer/SKILL.md` | **AI** (review-runner) | How to write evidence-grounded finding explanations and when a compact Mermaid graph can clarify a causal path or interaction |
 | Verifier | `.opencode/agents/review-verifier.md` | **AI** (subagent) | Independently tries to refute every proposed finding using only pinned sources |
-| Evidence gate | `review_evidence.py` | Script | Rejects any finding whose location/reference isn't a real pinned line; caps at seven findings; requires one verdict per finding; renders the summary and inline comments with matching IDs |
+| Evidence gate | `review_evidence.py` | Script | Rejects any finding whose location/reference isn't a real pinned line; caps at seven findings; requires one verdict per finding; validates optional Mermaid sources and renders them in the summary and inline comments |
 | Inline publisher | `post_inline_comments.py` | Script | Posts or updates one anchored comment per confirmed finding on the current PR head, deduplicated by finding ID |
 
 Built-in dimensions have `default: true`; the GitHub KISS recipe is

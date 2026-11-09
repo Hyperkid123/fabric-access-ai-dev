@@ -17,7 +17,9 @@ permissions:
 For each proposed finding, independently inspect the supplied pinned PR and
 related-repository code excerpts. Look for guards, compatibility aliases,
 alternative call paths, or tests that disprove the claimed failure. Do not
-invent missing evidence. Return only JSON:
+invent missing evidence. If a finding includes an optional Mermaid diagram,
+check that it is plausible Mermaid syntax and that its actors, edges, and
+outcomes are supported by the pinned evidence. Return only JSON:
 
 {"verdicts":[{"finding_id":"F1","status":"confirmed|refuted|uncertain",
 "refutation_check":"specific counterexample or code path checked",
