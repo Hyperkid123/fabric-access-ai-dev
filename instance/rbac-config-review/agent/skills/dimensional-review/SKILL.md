@@ -133,9 +133,11 @@ For each selected dimension, prepend the full local reviewer guide to a shared r
 
 ### 3.3 rbac-config-review Workflow Dispatch (OpenCode)
 
-This vendored copy runs inside the `rbac-config-review` instance's `review-runner` agent on OpenCode. The `review-verifier` subagent is reserved for the later evidence-refutation pass. Review dimensions run in the current session.
+This vendored copy runs inside the `rbac-config-review` instance's `review-runner` agent on OpenCode. Each selected pass in `review_plan.passes` includes a `model_preference` and `review_agent`, resolved from `dimensions.yaml`'s `config.model_routing`. The Luna profile runs in the current `review-runner` session; the Terra profile runs in the configured `review-terra` subagent. The separate `review-verifier` remains reserved for the later evidence-refutation pass.
 
-Instead, run each applicable dimension **sequentially in the current session**: for each dimension, load its local reviewer guide, build the same prompt described below as an internal review pass over the diff and relevant source files, and produce that dimension's JSON finding object before moving to the next dimension. This trades dispatch parallelism for guaranteed availability under this runtime — the CONTEXT/DETECT/MERGE phases, dedup, and consensus scoring are unchanged; Step 5 uses the review-only workflow's GitHub publication. `model_preference` in `dimensions.yaml` remains advisory metadata and must not be mapped to an unrelated model.
+Run dimensions **sequentially** in review-plan order. For `review_agent: current`, perform the dimension pass in the current session. For a named subagent such as `review-terra`, invoke that agent with the single dimension's guide and the same pinned review context. Wait for its result before starting the next dimension. Do not silently fall back to Luna if a configured subagent fails or is unavailable; record that dimension as failed and continue according to the workflow's failure handling. This preserves independent dimension results while applying each configured model profile.
+
+Dynamic dimensions without `model_preference` use the catalog's configured default model profile. Unknown profiles fail during skill preparation rather than running under a different model.
 
 Each dimension's review pass must include:
 
@@ -250,7 +252,7 @@ Built-in reviewer guides remain inside this skill's reviewers/ directory. Dynami
 
 ## Rules
 
-1. Run each dimension review sequentially in the current session per **3.3 rbac-config-review Workflow Dispatch (OpenCode)** — `review-runner` has no `collaboration.spawn_agent` or per-dimension subagent available; `review-verifier` is reserved for the workflow's evidence-refutation pass.
+1. Run each dimension review sequentially using its `review_agent` from the generated review plan, per **3.3 rbac-config-review Workflow Dispatch (OpenCode)**. The `review-verifier` is reserved for the workflow's evidence-refutation pass.
 2. Reviewers are read-only: do not modify the target repository, post PR comments, or persist learnings unless the user explicitly selected an output/action that authorizes it.
 3. In this instance, only `workflows/review-only/AGENTS.md` step 7 posts to a PR, using the validated JSON publication and inline-comment files after `review_evidence.py` validation. Do not create separate review reports.
 4. If a required read, agent dispatch, or output write is blocked, report the blocker and do not claim that the affected work completed.

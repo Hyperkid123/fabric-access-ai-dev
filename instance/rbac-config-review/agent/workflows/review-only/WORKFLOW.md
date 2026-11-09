@@ -49,7 +49,8 @@ plain Python and run every cycle regardless of whether anything needs review.
 | Skill preparation | `review_skills.py` | Script | Selects dimensions, reads selected recipe YAML at a pinned commit, and generates per-run review skills |
 | Impact analysis | `impact_analysis.py` | Script | Deterministically (no LLM) extracts changed identifiers from the diff and `git grep`-matches them in related repos → `impact.json`'s `consumer_usages` (candidates, not confirmed breakage) |
 | Re-review request detection | `rereview_requests.py` | Script | Finds exact commands in top-level comments; the runner verifies each author's organization membership before acting |
-| Review criteria | `skills/dimensional-review/SKILL.md` | **AI** (review-runner) | Multi-dimension review (correctness, security, `cross-repo-dependencies`, …) over the pinned context; deduped and consensus-scored |
+| Review criteria | `skills/dimensional-review/SKILL.md` | **AI** (review-runner + review-terra) | Multi-dimension review (correctness, security, `cross-repo-dependencies`, …) over the pinned context; each pass uses its configured model profile |
+| Terra review worker | `.opencode/agents/review-terra.md` | **AI** (subagent) | Runs dimensions whose review plan routes to the configured Terra model |
 | Explanation quality | `skills/explanatory-answer/SKILL.md` | **AI** (review-runner) | General guidance for direct answers, causal reasoning, evidence, and optional Mermaid diagrams; this workflow maps it to finding fields |
 | Verifier | `.opencode/agents/review-verifier.md` | **AI** (subagent) | Independently tries to refute every proposed finding using only pinned sources |
 | Evidence gate | `review_evidence.py` | Script | Rejects any finding whose location/reference isn't a real pinned line; caps at seven findings; requires one verdict per finding; validates optional Mermaid sources and renders them in the review summary |
@@ -62,7 +63,10 @@ required. The generated skill gets the same pinned PR, related repositories,
 docs, and impact report as the built-in passes. Recipe extensions and test
 execution are not enabled by importing a recipe. The `high` level includes
 the applicable built-in dimensions, including documentation and observability.
-Dimension passes run sequentially; `review-verifier` checks their findings.
+Dimension passes run sequentially. Luna-preference passes run in the
+`review-runner` session; Terra-preference passes use `review-terra`.
+`review-verifier`, also configured with Terra, remains a separate pass that
+tries to refute the merged findings.
 The high preset remains the default. For a documentation-only diff, dimensions
 marked `skip_documentation_only` do not run; the current catalog selects six
 passes instead of fourteen. Mixed code and documentation changes still select
@@ -245,6 +249,7 @@ become a published finding.
 sequenceDiagram
     participant Q as Preflight
     participant R as review-runner
+    participant T as review-terra
     participant V as review-verifier
     participant GH as GitHub
 
@@ -254,7 +259,10 @@ sequenceDiagram
         R->>R: build_context.py → manifest.json + impact.json
     end
     rect rgb(248, 215, 218)
-        R->>R: selected review skills + explanatory-answer → findings.json
+        R->>R: run Luna-preference dimensions
+        R->>T: run each Terra-preference dimension
+        T->>R: dimension result JSON
+        R->>R: merge dimension results + explanatory-answer
         R->>V: findings + pinned context
         V->>R: verdicts.json (confirmed/refuted/uncertain)
     end
@@ -267,8 +275,8 @@ sequenceDiagram
 ```
 
 Gray bands are script (no model call); the red band is where an LLM
-actually reasons — review-runner proposing findings, and review-verifier
-trying to refute them.
+actually reasons — review-runner and review-terra proposing findings, and
+review-verifier trying to refute them.
 
 ## Finding shape
 
@@ -498,9 +506,12 @@ bot_status_update(instance_id="fabric-access-review", state="idle",
 ## Guardrails
 
 - **review-runner** permissions deny `edit`, all subagents except
-  `review-verifier`, `webfetch`, `websearch`, and the shell patterns
+  `review-terra` and `review-verifier`, `webfetch`, `websearch`, and the shell patterns
   `git push*`, `git commit*`, `gh pr merge*`, `gh pr edit*`, `gh pr
   review*--approve*`.
+- **review-terra** permissions deny `edit`, `shell`, all subagents,
+  `webfetch`, and `websearch`; it reviews only the supplied dimension guide and
+  pinned sources.
 - **review-verifier** permissions deny `edit`, `shell`, all subagents,
   `webfetch`, and `websearch` — it can only reason over the context it's
   given.

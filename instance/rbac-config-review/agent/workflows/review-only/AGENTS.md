@@ -86,16 +86,19 @@ artifacts. Keep uncompleted command IDs for the new cycle.
 
    Load the dimensional-review skill
    (`agent/skills/dimensional-review/SKILL.md`) with `--skip-learn` and run
-   exactly the listed passes sequentially, using their guide paths. The plan
-   has applied the configured level, applicability, and each dimension's
-   `default` flag.
+   exactly the listed passes sequentially, using their guide paths and
+   `review_agent` assignments. The plan has applied the configured level,
+   applicability, each dimension's `default` flag, and model routing.
    Entries in the current repository's `skills` list are always included,
    even when disabled by default, excluded by the level, or inapplicable by
    file pattern. Explicit focus and repository skills are combined once each.
    Read each pass's guide and, when present, its `context_path`. Give every
    pass this manifest's pinned PR checkout, final diff, related-repository
-   snapshots, linked docs, and impact report. Run CONTEXT with this manifest,
-   then EXECUTE and MERGE per the skill.
+   snapshots, linked docs, and impact report. Run `review_agent: current`
+   passes in review-runner; invoke a named review subagent for other model
+   profiles. Wait for each pass to finish before starting the next. Do not
+   fall back to another model if dispatch fails; record the pass as failed.
+   Run CONTEXT with this manifest, then EXECUTE and MERGE per the skill.
    Feed the
    `architecture` dimension this repo's `review-context.yaml` entry, its
    manifest-pinned related-repository snapshots and documents, and the impact
