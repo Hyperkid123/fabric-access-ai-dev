@@ -1,11 +1,16 @@
 # Dimensional Review catalog. Reviewer instructions live in this skill's reviewers/ directory.
 # All source paths are local to the directory containing SKILL.md.
-version: 6
+version: 7
 last_updated: '2026-11-09'
 config:
   consensus_threshold: 3
   dedup_jaccard: 0.4
   dedup_line_range: 5
+  model_routing:
+    default: luna
+    agents:
+      luna: current
+      terra: review-terra
 language_extensions:
   python:
   - py

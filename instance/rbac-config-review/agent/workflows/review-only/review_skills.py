@@ -15,7 +15,8 @@ import yaml
 
 from review_config import github_recipe_url, load_config
 
-SKILL_DIR = Path(__file__).resolve().parents[2] / "skills" / "dimensional-review"
+AGENT_DIR = Path(__file__).resolve().parents[2]
+SKILL_DIR = AGENT_DIR / "skills" / "dimensional-review"
 SHA = re.compile(r"^[0-9a-f]{40}$")
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 TEMPLATE = re.compile(r"{{\s*([a-z][a-z0-9_]*)\s*}}")
@@ -188,6 +189,28 @@ def select(catalog: dict, changed_files: list[str], level: str, focus: list[str]
     return selected
 
 
+def model_route(item: dict, catalog: dict) -> dict:
+    catalog_config = catalog.get("config")
+    if not isinstance(catalog_config, dict):
+        raise SkillError("dimensions.yaml config must be a mapping")
+    routing = catalog_config.get("model_routing")
+    if not isinstance(routing, dict):
+        raise SkillError("dimensions.yaml config.model_routing must be a mapping")
+    default = routing.get("default")
+    agents = routing.get("agents")
+    if not isinstance(default, str) or not isinstance(agents, dict):
+        raise SkillError("dimensions.yaml config.model_routing needs default and agents")
+    preference = item.get("model_preference", default)
+    if not isinstance(preference, str) or preference not in agents:
+        raise SkillError(f"Unsupported model preference for {item['name']}: {preference}")
+    agent = agents[preference]
+    if not isinstance(agent, str) or not (agent == "current" or NAME.fullmatch(agent)):
+        raise SkillError(f"Invalid review agent for model preference {preference}")
+    if agent != "current" and not (AGENT_DIR / ".opencode" / "agents" / f"{agent}.md").is_file():
+        raise SkillError(f"Configured review agent is unavailable: {agent}")
+    return {"model_preference": preference, "review_agent": agent}
+
+
 def prepare(manifest: dict, config: dict, output_dir: Path, focus: list[str] | None = None,
             level: str | None = None) -> dict:
     catalog = yaml.safe_load((SKILL_DIR / "dimensions.yaml").read_text())
@@ -201,15 +224,17 @@ def prepare(manifest: dict, config: dict, output_dir: Path, focus: list[str] | N
     revisions: dict[tuple[str, str], str] = {}
     passes = []
     for item in selected:
+        route = model_route(item, catalog)
         if item.get("type") == "dynamic":
-            passes.append(generate_skill(item, manifest, output_dir, revisions))
+            passes.append({**generate_skill(item, manifest, output_dir, revisions), **route})
             continue
         source = item["source"]
         guide = (SKILL_DIR / source["path"]).resolve()
         if not guide.is_relative_to(SKILL_DIR.resolve()) or not guide.is_file():
             raise SkillError(f"Missing reviewer guide: {source['path']}")
         passes.append({"name": item["name"], "guide_path": str(guide),
-                       "source_skill": source.get("plugin"), "source_repo": source.get("repo")})
+                       "source_skill": source.get("plugin"), "source_repo": source.get("repo"),
+                       **route})
     output_dir.mkdir(parents=True, exist_ok=True)
     plan = {"mode": "dimensions", "level": chosen_level, "passes": passes,
             "plan_path": str(output_dir / "review-plan.json")}

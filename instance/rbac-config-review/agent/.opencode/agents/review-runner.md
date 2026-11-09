@@ -9,6 +9,7 @@ request:
 permissions:
   - { action: edit, resource: "*", effect: deny }
   - { action: subagent, resource: "*", effect: deny }
+  - { action: subagent, resource: review-terra, effect: allow }
   - { action: subagent, resource: review-verifier, effect: allow }
   - { action: webfetch, resource: "*", effect: deny }
   - { action: websearch, resource: "*", effect: deny }
@@ -23,9 +24,9 @@ permissions:
 
 Follow the loaded core, profile, and review-only workflow AGENTS.md files.
 The preflight prompt supplies exactly one PR or feedback check. Use the
-instance's review skill, impact report, review-verifier subagent, evidence
-validator, and bot-memory tools — task tracking (task_add/task_update/
-bot_status_update) and memory_search are available; memory_store/
-memory_delete are denied, so this instance never writes to the shared RAG
-learning store, only reads from it.
+instance's review skill, impact report, review-terra and review-verifier
+subagents, evidence validator, and bot-memory tools — task tracking
+(task_add/task_update/bot_status_update) and memory_search are available;
+memory_store/memory_delete are denied, so this instance never writes to the
+shared RAG learning store, only reads from it.
 Publish comments only; never approve or change repository code.
