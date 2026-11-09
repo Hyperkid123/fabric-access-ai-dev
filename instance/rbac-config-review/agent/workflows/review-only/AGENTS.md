@@ -270,9 +270,10 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    same-head comment with the same ID instead of duplicating it. GitHub may
    create separate review records for inline comments; keep tracking the summary
    review's ID. If this step fails, leave the task in progress.
-   Both publisher scripts append the visible phrase `dev-review-bot` to every
-   published summary and inline comment; keep it in place for standard and
-   custom formats.
+   Every published summary and inline comment must carry the hidden marker
+   `<!-- dev-review-bot:... -->`. The evidence renderer writes these markers;
+   publishers also migrate legacy `fabric-access-*` markers when resuming a
+   pending publication. Keep markers in standard and custom formats.
    Include file/line references in the review body (already true of the
    validated output). Record the review URL and id.
 8. Mark the task done with review_id, the pending update_count (0 on its first

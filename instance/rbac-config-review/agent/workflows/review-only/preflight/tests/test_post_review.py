@@ -15,8 +15,7 @@ import post_review  # noqa: E402
 
 HEAD, BASE = "a" * 40, "b" * 40
 REPO, PR = "org/repo", 42
-BODY = f"## Review #1\n\n<!-- fabric-access-review:{HEAD}:{BASE} -->\n"
-PUBLISHED_BODY = f"{BODY.rstrip()}\n\n— dev-review-bot"
+BODY = f"## Review #1\n\n<!-- dev-review-bot:fabric-access-review:{HEAD}:{BASE} -->\n"
 
 
 def publication(tmp_path):
@@ -38,9 +37,9 @@ def test_first_review_posts_json_and_retry_recovers_same_review(tmp_path, monkey
         if paginate:
             return existing
         if method == "POST":
-            assert payload == {"commit_id": HEAD, "event": "COMMENT", "body": PUBLISHED_BODY}
+            assert payload == {"commit_id": HEAD, "event": "COMMENT", "body": BODY}
             created = {"id": 73, "state": "COMMENTED", "html_url": "https://github.com/org/repo/pull/42#pullrequestreview-73",
-                       "user": {"login": "review-bot"}, "body": PUBLISHED_BODY}
+                       "user": {"login": "review-bot"}, "body": BODY}
             existing.append(created)
             return created
         raise AssertionError((endpoint, method))
@@ -68,7 +67,7 @@ def test_existing_review_is_updated_in_place(tmp_path, monkeypatch):
     monkeypatch.setattr(post_review, "api", api)
     result = post_review.publish(REPO, PR, HEAD, BASE, publication(tmp_path), review_id=73)
     assert result["action"] == "updated"
-    assert calls[-1] == (f"repos/{REPO}/pulls/{PR}/reviews/73", "PUT", {"body": PUBLISHED_BODY})
+    assert calls[-1] == (f"repos/{REPO}/pulls/{PR}/reviews/73", "PUT", {"body": BODY})
 
 
 def test_changed_pr_and_duplicate_reviews_fail_closed(tmp_path, monkeypatch):
