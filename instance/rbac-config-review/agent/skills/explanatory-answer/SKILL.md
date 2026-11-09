@@ -5,17 +5,18 @@ description: Explain answers to any question with a direct response, clear reaso
 
 # Explanatory Answer
 
-Answer the question first. Then help the reader understand how the answer follows from the relevant facts. Adjust depth to the question: a simple fact may need one sentence, while a complex mechanism may need several steps.
+Answer the question first. Then help the reader understand how the answer follows from the relevant facts. Use the order below for an explanation; a simple fact may need only the direct answer.
 
 ## Explain
 
-1. **Answer:** State the conclusion directly in familiar terms.
-2. **Why or how:** Describe the mechanism or cause in a sensible order.
-3. **Reasoning:** Connect the facts to the conclusion. Identify assumptions and distinguish observed facts from inferences when that distinction matters. Do not leave a key step for the reader to guess.
-4. **Support:** Cite a source, show a calculation, or give a concrete example when it helps establish or illustrate the answer. State material uncertainty when the evidence is incomplete.
-5. **Implication:** Add a practical consequence or next step only when it helps answer the question.
+1. **Answer:** Respond directly to the question.
+2. **Why or how:** Explain the mechanism in a clear sequence.
+3. **Reasoning:** Connect the relevant facts to the conclusion; cite evidence when needed. Identify material assumptions or uncertainty, and do not leave a key step for the reader to guess.
+4. **Example:** Add one only if it makes the explanation easier to grasp.
+5. **Implication:** Say what follows or what to do, when relevant.
+6. **Diagram (optional):** Add a compact Mermaid diagram when a visual makes the explanation clearer.
 
-Use headings such as **Answer**, **Why**, and **Reasoning** when they make a longer response easier to scan. Do not force every heading into a short answer or repeat the same point under multiple headings.
+Use these headings in this order when a longer answer benefits from structure. Omit optional sections when they add nothing, and do not repeat the same point under multiple headings.
 
 ## Optional diagram
 
@@ -27,4 +28,4 @@ flowchart LR
   B --> C[Result]
 ```
 
-For a direct mismatch or a one-step answer, prose is usually clearer. If Mermaid is unavailable, express the same relationship in text.
+If Mermaid is unavailable, express the same relationship in text.
