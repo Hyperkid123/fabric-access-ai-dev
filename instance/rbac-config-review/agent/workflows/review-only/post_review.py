@@ -7,8 +7,18 @@ import argparse
 import json
 import re
 import subprocess
-import tempfile
 from pathlib import Path
+
+
+def add_payload_fields(command: list[str], payload: dict) -> None:
+    """Append scalar JSON fields for the runner's remote gh API bridge."""
+    for key, value in payload.items():
+        if not isinstance(key, str) or not key:
+            raise ValueError("GitHub API payload keys must be non-empty strings")
+        if not isinstance(value, (str, int, float, bool)) and value is not None:
+            raise ValueError("GitHub API payload fields must be scalar values")
+        rendered = value if isinstance(value, str) else json.dumps(value)
+        command.extend(["--field", f"{key}={rendered}"])
 
 
 def api(endpoint: str, method: str = "GET", payload: dict | None = None,
@@ -17,13 +27,9 @@ def api(endpoint: str, method: str = "GET", payload: dict | None = None,
     if paginate:
         command.extend(["--paginate", "--slurp"])
     if payload is not None:
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8") as request:
-            json.dump(payload, request)
-            request.flush()
-            command.extend(["--method", method, "--input", request.name])
-            result = subprocess.run(command, capture_output=True, text=True, check=False)
-    else:
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        command.extend(["--method", method])
+        add_payload_fields(command, payload)
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
     if result.returncode:
         raise RuntimeError(result.stderr.strip() or f"gh api failed: {endpoint}")
     data = json.loads(result.stdout)
