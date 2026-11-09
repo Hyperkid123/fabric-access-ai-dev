@@ -116,7 +116,12 @@ Each item under `dimensions` describes one review pass. Common fields are:
   run.
 - **`source.path`**: local reviewer guide for a built-in dimension. The
   `plugin` and `repo` fields identify its source attribution.
-- **`model_preference`** (optional): preferred model class for that pass.
+- **`model_preference`** (optional): advisory metadata only in this instance.
+  Review passes run sequentially in one OpenCode session, and this field does
+  not route a pass to a different model. The current session uses the model in
+  `agent/instance.yaml` (`gpt-6-luna`), so catalog entries marked `terra` still
+  run under Luna. Per-dimension Terra usage would require runtime model-routing
+  support; changing this YAML field alone does not enable it.
 
 `language_extensions` maps changed-file suffixes to language names. Automatic
 selection uses changed paths, the chosen level, `default`, languages, file
