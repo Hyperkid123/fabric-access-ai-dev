@@ -82,9 +82,10 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    filler that happens to validate.
 
    Load the dimensional-review skill
-   (`agent/skills/dimensional-review/SKILL.md`) and run exactly the listed
-   passes sequentially, using their guide paths. The plan has applied the
-   configured level, applicability, and each dimension's `default` flag.
+   (`agent/skills/dimensional-review/SKILL.md`) with `--skip-learn` and run
+   exactly the listed passes sequentially, using their guide paths. The plan
+   has applied the configured level, applicability, and each dimension's
+   `default` flag.
    Entries in the current repository's `skills` list are always included,
    even when disabled by default, excluded by the level, or inapplicable by
    file pattern. Explicit focus and repository skills are combined once each.
@@ -100,6 +101,10 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    Feed `cross-repo-dependencies` the same pinned context plus the impact
    report's `consumer_usages` as candidate evidence. Do not infer or fetch
    repositories or documents outside the target repo's declared context.
+   `--skip-learn` skips only the skill's post-review LEARN phase. The selected
+   review dimensions and their finding checks still run. The LEARN output
+   would not be persisted because this bot cannot write to shared memory, and
+   it is not part of the validated review body.
 
    Record skipped or failed passes and their reasons in task state. If no
    pass completes, stop without publishing a clean review.

@@ -67,6 +67,23 @@ def test_default_dimensions_exclude_the_opt_in_recipe():
     assert {"correctness", "documentation", "observability"} <= names
 
 
+def test_high_review_skips_code_only_passes_for_documentation_changes():
+    catalog = yaml.safe_load((skills.SKILL_DIR / "dimensions.yaml").read_text())
+    selected = skills.select(catalog, ["docs/MCP-operator-guide.md"], "high", None, [])
+    names = {item["name"] for item in selected}
+    assert names == {"architecture", "documentation", "observability", "security",
+                     "api-contract", "cross-repo-dependencies"}
+    assert {item["name"] for item in skills.select(catalog, ["README.mdx", "docs/setup.rst"],
+                                                    "high", None, [])} == names
+    mixed = skills.select(catalog, ["docs/MCP-operator-guide.md", "rbac/management/mcp_views.py"],
+                          "high", None, [])
+    assert {"correctness", "performance", "integration", "learning-extraction"} <= {
+        item["name"] for item in mixed
+    }
+    focused = skills.select(catalog, ["docs/MCP-operator-guide.md"], "high", ["correctness"], [])
+    assert [item["name"] for item in focused] == ["correctness"]
+
+
 def test_repository_skill_runs_despite_default_and_level_and_receives_pinned_context(tmp_path, monkeypatch):
     calls = mock_gh(monkeypatch)
     source = manifest(tmp_path)

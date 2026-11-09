@@ -21,6 +21,7 @@ NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 TEMPLATE = re.compile(r"{{\s*([a-z][a-z0-9_]*)\s*}}")
 TICKET = re.compile(r"\b[A-Z][A-Z0-9]+-[1-9][0-9]*\b")
 MAX_RECIPE_BYTES = 150_000
+DOCUMENTATION_SUFFIXES = {".md", ".mdx", ".rst", ".adoc", ".asciidoc", ".org"}
 
 
 class SkillError(ValueError):
@@ -177,6 +178,10 @@ def select(catalog: dict, changed_files: list[str], level: str, focus: list[str]
             if not language_match:
                 language_match = bool(languages.intersection(item.get("languages", [])))
             if not language_match:
+                continue
+            if item.get("skip_documentation_only") and all(
+                Path(path).suffix.lower() in DOCUMENTATION_SUFFIXES for path in changed_files
+            ):
                 continue
             if item.get("file_patterns") and not any(
                 _matches(pattern, path) for pattern in item["file_patterns"] for path in changed_files

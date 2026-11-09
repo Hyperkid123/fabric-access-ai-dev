@@ -66,6 +66,7 @@ dimensions:
   default: true
   category: general
   languages: all
+  skip_documentation_only: true
   description: Bugs, logic errors, edge cases, off-by-one, null derefs
   model_preference: terra
   source:
@@ -76,6 +77,7 @@ dimensions:
   default: true
   category: general
   languages: all
+  skip_documentation_only: true
   description: Readability, naming, complexity, duplication, style consistency
   model_preference: luna
   source:
@@ -126,6 +128,7 @@ dimensions:
   default: true
   category: specialist
   languages: all
+  skip_documentation_only: true
   description: N+1 queries, memory leaks, blocking calls, caching, allocations
   model_preference: luna
   source:
@@ -136,6 +139,7 @@ dimensions:
   default: true
   category: specialist
   languages: all
+  skip_documentation_only: true
   description: Swallowed exceptions, error propagation, HTTP status codes, retries
   model_preference: luna
   source:
@@ -146,6 +150,7 @@ dimensions:
   default: true
   category: specialist
   languages: all
+  skip_documentation_only: true
   description: Coverage gaps, brittle tests, mock correctness, missing edge cases
   model_preference: luna
   source:
@@ -156,6 +161,7 @@ dimensions:
   default: true
   category: specialist
   languages: all
+  skip_documentation_only: true
   description: Race conditions, deadlocks, thread safety, transaction isolation
   model_preference: terra
   source:
@@ -205,6 +211,7 @@ dimensions:
   default: true
   category: specialist
   languages: all
+  skip_documentation_only: true
   description: Webhook delivery, retries, idempotency, circuit breakers, event ordering
   model_preference: luna
   source:
@@ -264,6 +271,7 @@ dimensions:
   default: true
   category: meta
   languages: all
+  skip_documentation_only: true
   description: Extract reusable patterns and anti-patterns worth remembering
   model_preference: luna
   source:

@@ -63,6 +63,13 @@ docs, and impact report as the built-in passes. Recipe extensions and test
 execution are not enabled by importing a recipe. The `high` level includes
 the applicable built-in dimensions, including documentation and observability.
 Dimension passes run sequentially; `review-verifier` checks their findings.
+The high preset remains the default. For a documentation-only diff, dimensions
+marked `skip_documentation_only` do not run; the current catalog selects six
+passes instead of fourteen. Mixed code and documentation changes still select
+the full applicable set, and an explicitly selected skill always runs.
+The review-only workflow also uses `--skip-learn`. Its LEARN phase would produce
+notes that this instance cannot save to shared memory or include in the
+validated PR review; skipping it leaves the finding and verification steps intact.
 
 Each repository can list dimension names in `review-context.yaml` under
 `repositories.<repo-key>.skills`. These skills always run for that repository,

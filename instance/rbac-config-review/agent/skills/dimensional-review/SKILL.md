@@ -60,6 +60,9 @@ Applicability rules:
 - A dimension with languages: all matches any PR with changed files, including documentation-only or configuration-only changes.
 - Otherwise, at least one changed file must match one of the dimension languages.
 - If file_patterns are configured, at least one changed file must also match a pattern.
+- A dimension with `skip_documentation_only: true` is skipped when every changed
+  file is Markdown, MDX, reStructuredText, AsciiDoc, or Org text. Explicit
+  `--focus` and repository `skills` still select it.
 - Apply any configured mutual-exclusion rules after matching languages and file patterns.
 - For ordinary level selection, include only entries with `default: true`. An explicitly named `--focus` entry may have `default: false`.
 - Always include the current repository's entries from `review-context.yaml`'s `skills` list, regardless of default, level, or applicability. Combine them with focused or default selections without duplicates.
@@ -203,6 +206,8 @@ Sort findings by:
 ## Step 5 Override: rbac-config-review Workflow Output
 
 **This instance does not use Step 5 (OUTPUT) below as written.** `review-runner` never writes `dimensional-review.md`/`.json`, never runs `--format pr-comment`, and never posts directly — `workflows/review-only/AGENTS.md` step 7 is the only place the validated summary and inline comments are posted, after `review_evidence.py` validates them. Posting any dimensional-review output directly would bypass that evidence gate and the verifier.
+
+The review-only workflow invokes this skill with `--skip-learn`: Step 6's pattern capture and alternatives report are omitted because this instance cannot persist learnings and the validated review body does not use them. This does not remove the `learning-extraction` dimension when the plan selects it.
 
 **Finding identity and label formatting:** Assign each finding a stable, unique task ID (`F1`, `F2`, ...). Keep the ID unchanged in the task ledger and every later summary; never reuse an ID already present in the ledger, including resolved entries. Give each new finding the next unused ID and include `[F1]` wherever it is mentioned. For standard format use the workflow's bold labels. For custom format follow the repository's selected skill layout and the custom verification process in `workflows/review-only/AGENTS.md`.
 
