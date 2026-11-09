@@ -12,6 +12,7 @@ WORKFLOW_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(WORKFLOW_DIR))
 
 import build_context as context  # noqa: E402
+from impact_analysis import changed_lines  # noqa: E402
 
 
 def test_diff_terms_prefers_changed_contract_identifiers():
@@ -112,3 +113,35 @@ def test_build_rejects_changed_head_before_fetching_context(tmp_path, monkeypatc
     with pytest.raises(context.ContextError, match="PR head or base changed"):
         context.build("insights-rbac", 42, "a" * 40, "c" * 40, tmp_path / "snapshots")
     assert not (tmp_path / "snapshots").exists()
+
+
+def test_build_uses_final_head_line_numbers_for_a_multi_commit_pr(tmp_path, monkeypatch):
+    head, base = "a" * 40, "b" * 40
+    (tmp_path / "project-repos.json").write_text(json.dumps({
+        "insights-rbac": {"upstream": "https://github.com/project-kessel/insights-rbac.git"}
+    }))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(context, "load_config", lambda: {"repositories": {}})
+    intermediate = (
+        "diff --git a/api.py b/api.py\n--- a/api.py\n+++ b/api.py\n"
+        "@@ -1,2 +1,3 @@\n first\n+target_permission = True\n last\n"
+    )
+    consolidated = (
+        "diff --git a/api.py b/api.py\n--- a/api.py\n+++ b/api.py\n"
+        "@@ -1,2 +1,5 @@\n first\n+prefix_a = 1\n+prefix_b = 2\n+target_permission = True\n last\n"
+    )
+
+    def fake_run(args, **_kwargs):
+        if args[:3] == ["gh", "pr", "view"]:
+            return json.dumps({"headRefOid": head, "baseRefOid": base})
+        if args[:3] == ["gh", "pr", "diff"]:
+            return intermediate if "--patch" in args else consolidated
+        raise AssertionError(args)
+
+    monkeypatch.setattr(context, "run", fake_run)
+    monkeypatch.setattr(context, "update_pr_checkout", lambda *_args: head)
+    result = context.build("insights-rbac", 42, head, base, tmp_path / "snapshots")
+    lines = changed_lines(Path(result["pr"]["diff_path"]).read_text())
+    assert [(line["line"], line["side"]) for line in lines if line["text"] == "target_permission = True"] == [
+        (4, "added")
+    ]

@@ -121,7 +121,9 @@ def build(repo_key: str, pr_number: int, expected_head: str, expected_base: str,
     ]))
     if pr.get("headRefOid") != expected_head or pr.get("baseRefOid") != expected_base:
         raise ContextError("PR head or base changed since preflight; retry on the next cycle")
-    patch = run(["gh", "pr", "diff", str(pr_number), "--repo", target, "--patch"], timeout=120)
+    # The consolidated PR diff uses current-head line numbers; --patch emits
+    # individual commits whose line numbers can shift before the final head.
+    patch = run(["gh", "pr", "diff", str(pr_number), "--repo", target, "--color", "never"], timeout=120)
     if len(patch) > 2_000_000:
         raise ContextError("PR diff exceeds 2 MB; review manually or split the PR")
     terms = diff_terms(patch)
