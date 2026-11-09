@@ -117,7 +117,8 @@ each one — a session only launches if a PR survives all of this:
 
 Requests are matched exactly from new top-level comments, bounded by the
 preflight timestamp, and deduplicated using comment IDs in task state. The
-runner verifies org membership; ordinary feedback does not trigger a review.
+runner verifies org membership before acting on commands or ordinary feedback;
+ordinary feedback does not trigger a review.
 Requests arriving after a review starts are left for a later cycle. A validated
 but unfinished publication is recorded in task state so retries reuse its body
 and number rather than counting another review.
@@ -514,7 +515,7 @@ bot_status_update(instance_id="fabric-access-review", state="idle",
   `<!-- fabric-access-review:<head_sha>:<base_sha> -->`
   marker in the summary records which revision it reflects. `feedback_check`
   cycles do not touch `review_id` or inline threads unless an authorized
-  re-review command starts the normal review path. Ordinary human feedback is
+  re-review command starts the normal review path. Verified member feedback is
   recorded in task state; this instance cannot write to shared memory.
 - Related repositories and linked docs are read-only context — they never
   expand the PR queue, and `review-context.yaml` is the only source of
