@@ -1,6 +1,6 @@
 # Dimensional Review catalog. Reviewer instructions live in this skill's reviewers/ directory.
 # All source paths are local to the directory containing SKILL.md.
-version: 5
+version: 6
 last_updated: '2026-11-09'
 config:
   consensus_threshold: 3
@@ -63,6 +63,7 @@ review_levels:
       all_applicable: true
 dimensions:
 - name: correctness
+  default: true
   category: general
   languages: all
   description: Bugs, logic errors, edge cases, off-by-one, null derefs
@@ -72,6 +73,7 @@ dimensions:
     plugin: dimensional-review:correctness
     repo: dimensional-review
 - name: code-quality
+  default: true
   category: general
   languages: all
   description: Readability, naming, complexity, duplication, style consistency
@@ -81,6 +83,7 @@ dimensions:
     plugin: dimensional-review:code-quality
     repo: dimensional-review
 - name: architecture
+  default: true
   category: general
   languages: all
   description: Design patterns, separation of concerns, coupling, layering violations
@@ -90,6 +93,7 @@ dimensions:
     plugin: dimensional-review:architecture
     repo: dimensional-review
 - name: documentation
+  default: true
   category: general
   languages: all
   description: Missing, stale, or incorrect documentation for changed behavior and documentation-only changes
@@ -99,6 +103,7 @@ dimensions:
     plugin: dimensional-review:documentation
     repo: dimensional-review
 - name: observability
+  default: true
   category: general
   languages: all
   description: Operational visibility gaps and useful metrics or Grafana dashboard changes
@@ -108,6 +113,7 @@ dimensions:
     plugin: dimensional-review:observability
     repo: dimensional-review
 - name: security
+  default: true
   category: specialist
   languages: all
   description: OWASP Top 10, auth, secrets, injection, crypto
@@ -117,6 +123,7 @@ dimensions:
     plugin: dimensional-review:security
     repo: dimensional-review
 - name: performance
+  default: true
   category: specialist
   languages: all
   description: N+1 queries, memory leaks, blocking calls, caching, allocations
@@ -126,6 +133,7 @@ dimensions:
     plugin: dimensional-review:performance
     repo: dimensional-review
 - name: error-handling
+  default: true
   category: specialist
   languages: all
   description: Swallowed exceptions, error propagation, HTTP status codes, retries
@@ -135,6 +143,7 @@ dimensions:
     plugin: dimensional-review:error-handling
     repo: dimensional-review
 - name: test-quality
+  default: true
   category: specialist
   languages: all
   description: Coverage gaps, brittle tests, mock correctness, missing edge cases
@@ -144,6 +153,7 @@ dimensions:
     plugin: dimensional-review:test-quality
     repo: dimensional-review
 - name: concurrency
+  default: true
   category: specialist
   languages: all
   description: Race conditions, deadlocks, thread safety, transaction isolation
@@ -153,6 +163,7 @@ dimensions:
     plugin: dimensional-review:concurrency
     repo: dimensional-review
 - name: api-contract
+  default: true
   category: specialist
   languages: all
   description: Breaking changes, REST conventions, backward compatibility, versioning
@@ -162,6 +173,7 @@ dimensions:
     plugin: dimensional-review:api-contract
     repo: dimensional-review
 - name: db-schema
+  default: true
   category: specialist
   languages: all
   file_patterns:
@@ -176,6 +188,7 @@ dimensions:
     plugin: dimensional-review:db-schema
     repo: dimensional-review
 - name: db-query
+  default: true
   category: specialist
   languages: all
   file_patterns:
@@ -189,6 +202,7 @@ dimensions:
     plugin: dimensional-review:db-query
     repo: dimensional-review
 - name: integration
+  default: true
   category: specialist
   languages: all
   description: Webhook delivery, retries, idempotency, circuit breakers, event ordering
@@ -198,6 +212,7 @@ dimensions:
     plugin: dimensional-review:integration
     repo: dimensional-review
 - name: cross-repo-dependencies
+  default: true
   category: specialist
   languages: all
   description: Breaking changes to identifiers, formats, or contracts shared with repos declared in review-context.yaml
@@ -207,6 +222,7 @@ dimensions:
     plugin: dimensional-review:cross-repo-dependencies
     repo: dimensional-review
 - name: vulnerability
+  default: true
   category: specialist
   languages:
   - python
@@ -219,6 +235,7 @@ dimensions:
     plugin: dimensional-review:vulnerability
     repo: dimensional-review
 - name: go-idioms
+  default: true
   category: specialist
   languages:
   - go
@@ -229,6 +246,7 @@ dimensions:
     plugin: dimensional-review:go-idioms
     repo: dimensional-review
 - name: react-patternfly
+  default: true
   category: specialist
   languages:
   - javascript
@@ -243,6 +261,7 @@ dimensions:
     plugin: dimensional-review:react-patternfly
     repo: dimensional-review
 - name: learning-extraction
+  default: true
   category: meta
   languages: all
   description: Extract reusable patterns and anti-patterns worth remembering
@@ -251,3 +270,14 @@ dimensions:
     path: reviewers/learning-extraction.md
     plugin: dimensional-review:learning-extraction
     repo: dimensional-review
+- name: goose-kiss-review
+  type: dynamic
+  default: false
+  category: specialist
+  languages: all
+  description: Goose KISS and YAGNI review, available when explicitly selected
+  source:
+    type: goose_recipe
+    path: https://github.com/chmulder-rh/goose-config/blob/master/recipes/kiss-review.yaml
+    plugin: dimensional-review:goose-kiss-review
+    repo: chmulder-rh/goose-config

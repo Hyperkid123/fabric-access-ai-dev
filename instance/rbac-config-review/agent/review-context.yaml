@@ -1,6 +1,8 @@
 review_label: dev-bot-review
 repositories:
   insights-rbac:
+    skills:
+      - goose-kiss-review
     related:
       - id: rbac-config
         url: https://github.com/project-kessel/rbac-config

@@ -12,7 +12,7 @@ sys.path.insert(0, str(WORKFLOW_DIR))
 sys.path.insert(0, str(ROOT / "dev-bot" / "presets" / "shared" / "preflight"))
 
 import review_queue as queue  # noqa: E402
-from review_config import github_markdown_url, github_repo_url, load_config  # noqa: E402
+from review_config import github_markdown_url, github_recipe_url, github_repo_url, load_config  # noqa: E402
 
 
 REPOS = {
@@ -35,6 +35,7 @@ PR = {
 def test_config_accepts_direct_markdown_links_and_known_related_repos():
     config = load_config()
     assert config["review_label"] == "dev-bot-review"
+    assert config["repositories"]["insights-rbac"]["skills"] == ["goose-kiss-review"]
     related = config["repositories"]["insights-rbac"]["related"]
     assert {item["id"] for item in related} >= {"rbac-config", "hbi", "kessel-inventory-api"}
     assert len(config["repositories"]["insights-rbac"]["docs"]) >= 3
@@ -52,6 +53,27 @@ def test_direct_file_url_rejects_repository_root_and_non_markdown():
         github_markdown_url("https://evil.example/org/docs/blob/main/notes.md")
     with pytest.raises(ValueError):
         github_markdown_url("https://github.com/org/docs/blob/main/%2e%2e%2fsecret.md")
+    with pytest.raises(ValueError):
+        github_recipe_url("https://evil.example/org/docs/blob/main/recipes/review.yaml")
+    with pytest.raises(ValueError):
+        github_recipe_url("https://github.com/org/docs/blob/main/recipes/%2e%2e/review.yaml")
+    with pytest.raises(ValueError):
+        github_recipe_url("https://github.com/org/docs/blob/main/recipes/review.md")
+
+
+def test_repository_skills_must_be_unique_known_dimensions(tmp_path):
+    import pytest
+    import yaml
+
+    config = {"review_label": "dev-bot-review", "repositories": {"rbac": {"skills": ["missing-skill"]}}}
+    path = tmp_path / "review-context.yaml"
+    path.write_text(yaml.safe_dump(config))
+    with pytest.raises(ValueError, match="unknown dimensions"):
+        load_config(path)
+    config["repositories"]["rbac"]["skills"] = ["correctness", "correctness"]
+    path.write_text(yaml.safe_dump(config))
+    with pytest.raises(ValueError, match="duplicates"):
+        load_config(path)
 
 
 def test_candidate_state_transitions():

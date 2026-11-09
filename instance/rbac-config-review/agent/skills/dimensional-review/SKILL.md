@@ -5,7 +5,7 @@ description: Multi-dimension parallel code review with auto-detection, deduplica
 
 # Dimensional Review
 
-Parallel code review across multiple independent dimensions. Each dimension has a locally maintained reviewer guide in the reviewers/ directory; results are deduplicated and ranked by consensus.
+Code review across multiple independent dimensions. Built-in dimensions have locally maintained guides; dynamic recipe dimensions have per-run generated skills. Results are deduplicated and ranked by consensus.
 
 **Input**: `$ARGUMENTS` — PR number, GitHub PR URL, diff path, or empty (uses current branch diff)
 
@@ -61,20 +61,22 @@ Applicability rules:
 - Otherwise, at least one changed file must match one of the dimension languages.
 - If file_patterns are configured, at least one changed file must also match a pattern.
 - Apply any configured mutual-exclusion rules after matching languages and file patterns.
+- For ordinary level selection, include only entries with `default: true`. An explicitly named `--focus` entry may have `default: false`.
+- Always include the current repository's entries from `review-context.yaml`'s `skills` list, regardless of default, level, or applicability. Combine them with focused or default selections without duplicates.
 
 Review-level rules:
 
 - The level defaults to review_levels.default. Built-in presets are light, medium, and high; their dimension lists and the default can be changed in dimensions.yaml. Additional named presets may be added there.
 - For a preset with a dimensions list, select the intersection of that list and applicable dimensions. A preset cannot make an inapplicable dimension applicable.
 - For a preset with all_applicable: true, select every applicable dimension. The built-in high preset uses this setting.
-- If --focus is supplied, it takes precedence over --level and selects only the named dimensions, regardless of applicability or level.
+- If --focus is supplied, it takes precedence over --level and selects the named dimensions plus the repository's `skills`, regardless of applicability or level.
 - If --level names an unknown preset, stop and list the configured preset names.
 
 Light is the cost-saving preset and runs a small baseline review. Medium is the balanced preset. High is the configured default for this review bot; it checks every applicable dimension and generally costs more.
 
 ### 2.2 Print Applicability Table
 
-Print the selected level and show each dimension as DISPATCH, SKIP (not applicable), or FILTERED (applicable but excluded by the selected level). Include the reason for each status. For --focus, mark only the explicitly requested dimensions for dispatch.
+Print the selected level and show each dimension as DISPATCH, SKIP (not applicable), or FILTERED (excluded by default or level). Include the reason for each status. For --focus, also mark the repository's required skills for dispatch.
 
 Before dispatching, print:
 
@@ -98,13 +100,13 @@ Dispatching <N> dimensions at level <level> (<general> general, <specialist> spe
 
 ## Step 3: Load Local Reviewer Guides + Dispatch (EXECUTE)
 
-This skill uses only reviewer guides stored in its own reviewers/ directory. The guides are read at runtime and are maintained with this skill.
+Read built-in reviewer guides from this skill's reviewers/ directory and dynamic guides from the current review plan.
 
 ### 3.1 Load Local Reviewer Instructions
 
-Resolve SKILL_DIR as the directory containing this SKILL.md. For each selected dimension, read the single local source named by dimension.source.path, relative to SKILL_DIR. Confirm the resolved path remains inside SKILL_DIR and the file exists.
+Read the manifest's `review_plan`. For built-in passes, resolve SKILL_DIR as the directory containing this SKILL.md and read the local guide named by the pass. A focused dynamic Goose entry has a generated guide under the snapshot and a source pinned to a GitHub commit. Do not read a raw branch URL as an instruction source.
 
-If a local guide is missing or unreadable, mark that dimension as failed, report the missing path, and continue with other dimensions. Do not search external repositories or use external reviewer instructions as a fallback.
+If a selected guide is missing or unreadable, mark that dimension as failed and report the path. Do not search unlisted repositories or use fallback instructions.
 
 Print the local source table and dispatch counts before launching. For example:
 
@@ -129,7 +131,7 @@ For each selected dimension, prepend the full local reviewer guide to a shared r
 
 ### 3.3 rbac-config-review Workflow Dispatch (OpenCode)
 
-This vendored copy runs inside the `rbac-config-review` instance's `review-runner` agent, on the OpenCode runtime (`instance.yaml` → `runtime: opencode`), not Codex. The upstream skill's `collaboration.spawn_agent` tool does not exist here. `review-runner`'s permissions allow exactly one subagent — `review-verifier` — and deny all others (`{ action: subagent, resource: "*", effect: deny }` plus one explicit `allow` for `review-verifier`); there is no per-dimension subagent to invoke, and `review-verifier` is reserved for the evidence-refutation pass in the workflow's own step 4 (see `workflows/review-only/AGENTS.md`), not for running dimension reviews.
+This vendored copy runs inside the `rbac-config-review` instance's `review-runner` agent on OpenCode. The `review-verifier` subagent is reserved for the later evidence-refutation pass. Review dimensions run in the current session.
 
 Instead, run each applicable dimension **sequentially in the current session**: for each dimension, load its local reviewer guide, build the same prompt described below as an internal review pass over the diff and relevant source files, and produce that dimension's JSON finding object before moving to the next dimension. This trades dispatch parallelism for guaranteed availability under this runtime — the CONTEXT/DETECT/MERGE phases, dedup, and consensus scoring are unchanged; **OUTPUT (Step 5) is overridden for this instance — see 5.0 below.** `model_preference` in `dimensions.yaml` remains advisory metadata and must not be mapped to an unrelated model.
 
@@ -499,7 +501,9 @@ All thresholds are defined in the sibling `dimensions.yaml` under `config:`:
 4. Confirm the local guide path exists and appears as LOCAL in the source table.
 5. Use --focus <dimension-name> to run it directly.
 
-All reviewer guides must remain inside this skill's reviewers/ directory. Do not add external reviewer-repository sources or fallback instructions.
+Built-in entries have `default: true`. A recipe entry uses `type: dynamic`, `default: false`, `source.type: goose_recipe`, and a direct GitHub YAML URL in `source.path`; it runs when focused or listed in the repository's `skills`. The bot's Python processor generates the per-run skill directly from that YAML.
+
+Built-in reviewer guides remain inside this skill's reviewers/ directory. Dynamic guides are generated in the current review snapshot from configured, commit-pinned recipes.
 
 ## Rules
 

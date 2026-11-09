@@ -46,6 +46,7 @@ plain Python and run every cycle regardless of whether anything needs review.
 | Queue | `preflight/01-review-queue.py` → `review_queue.py` | Script | Picks one labeled PR needing `review`, `resume`, or `feedback_check`; enforces the 10-task capacity limit and per-instance task isolation (`review-only:github:` prefix) |
 | Config validation | `review_config.py` | Script | Loads and strictly validates `review-context.yaml` (GitHub URL shape, `.md`-only doc links, unique ids) |
 | Context builder | `build_context.py` | Script | Checks out the PR head read-only, clones related repos at a pinned SHA, fetches configured Markdown docs at a pinned commit, writes `manifest.json` |
+| Skill preparation | `review_skills.py` | Script | Selects dimensions, reads selected recipe YAML at a pinned commit, and generates per-run review skills |
 | Impact analysis | `impact_analysis.py` | Script | Deterministically (no LLM) extracts changed identifiers from the diff and `git grep`-matches them in related repos → `impact.json`'s `consumer_usages` (candidates, not confirmed breakage) |
 | Re-review request detection | `rereview_requests.py` | Script | Finds exact commands in top-level comments; the runner verifies each author's organization membership before acting |
 | Review criteria | `skills/dimensional-review/SKILL.md` | **AI** (review-runner) | Multi-dimension review (correctness, security, `cross-repo-dependencies`, …) over the pinned context; deduped and consensus-scored |
@@ -54,10 +55,22 @@ plain Python and run every cycle regardless of whether anything needs review.
 | Evidence gate | `review_evidence.py` | Script | Rejects any finding whose location/reference isn't a real pinned line; caps at seven findings; requires one verdict per finding; renders the summary and inline comments with matching IDs |
 | Inline publisher | `post_inline_comments.py` | Script | Posts or updates one anchored comment per confirmed finding on the current PR head, deduplicated by finding ID |
 
-The default `high` review includes documentation and observability dimensions.
-They check whether changed behavior needs accurate documentation and whether
-useful metrics or Grafana dashboard changes are warranted. The review runner
-performs these dimension passes sequentially; its only subagent is the verifier.
+Built-in dimensions have `default: true`; the GitHub KISS recipe is
+`default: false` and may be selected explicitly. The bot's Python processor
+reads its YAML directly and generates a per-run skill; no Goose runtime is
+required. The generated skill gets the same pinned PR, related repositories,
+docs, and impact report as the built-in passes. Recipe extensions and test
+execution are not enabled by importing a recipe. The `high` level includes
+the applicable built-in dimensions, including documentation and observability.
+Dimension passes run sequentially; `review-verifier` checks their findings.
+
+Each repository can list dimension names in `review-context.yaml` under
+`repositories.<repo-key>.skills`. These skills always run for that repository,
+including when their catalog entry has `default: false` or the selected level
+would exclude them. For example, `insights-rbac` explicitly includes
+`goose-kiss-review`. These names are combined with the default or focused
+dimensions without duplicates. Unknown or duplicate skill names are
+configuration errors.
 
 ## The task queue: review_queue.py
 
@@ -223,7 +236,7 @@ sequenceDiagram
         R->>R: build_context.py → manifest.json + impact.json
     end
     rect rgb(248, 215, 218)
-        R->>R: dimensional-review + explanatory-answer → findings.json
+        R->>R: selected review skills + explanatory-answer → findings.json
         R->>V: findings + pinned context
         V->>R: verdicts.json (confirmed/refuted/uncertain)
     end
@@ -241,9 +254,8 @@ trying to refute them.
 
 ## Finding shape
 
-`dimensional-review`'s MERGE output is converted into this schema before the
-verifier/evidence steps — see the skill's own **Step 5 Override:
-rbac-config-review Workflow Output** section for the exact field mapping:
+The selected review passes are converted into this schema before the
+verifier/evidence steps:
 
 ```json
 {

@@ -10,6 +10,7 @@ import yaml
 
 AGENT_DIR = Path(__file__).resolve().parents[2]
 CONFIG_PATH = AGENT_DIR / "review-context.yaml"
+DIMENSIONS_PATH = AGENT_DIR / "skills" / "dimensional-review" / "dimensions.yaml"
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _REPO_PART = re.compile(r"^[A-Za-z0-9_.-]+$")
 
@@ -66,6 +67,25 @@ def github_markdown_url(url: str) -> tuple[str, str, str]:
     return f"{parts[0]}/{parts[1]}", parts[3], "/".join(parts[4:])
 
 
+def github_recipe_url(url: str) -> tuple[str, str, str]:
+    """Return (owner/repo, ref, path) for a direct GitHub Goose recipe URL."""
+    parsed = urlsplit(url)
+    parts = [unquote(part) for part in parsed.path.strip("/").split("/")]
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc.lower() != "github.com"
+        or parsed.username or parsed.password or parsed.query or parsed.fragment
+        or len(parts) < 5 or parts[2] != "blob"
+        or any(not _REPO_PART.fullmatch(part) for part in parts[:2])
+        or not _REPO_PART.fullmatch(parts[3])
+        or any(part in (".", "..") for part in (parts[0], parts[1], parts[3]))
+        or any(part in ("", ".", "..") or "/" in part or "\\" in part for part in parts[4:])
+        or not parts[-1].lower().endswith((".yaml", ".yml"))
+    ):
+        raise ReviewConfigError(f"Expected a direct GitHub Goose YAML URL: {url}")
+    return f"{parts[0]}/{parts[1]}", parts[3], "/".join(parts[4:])
+
+
 def _entries(value: object, field: str) -> list[dict]:
     if not isinstance(value, list):
         raise ReviewConfigError(f"{field} must be a list")
@@ -99,11 +119,27 @@ def load_config(path: Path = CONFIG_PATH) -> dict:
     repositories = data.get("repositories")
     if not isinstance(repositories, dict):
         raise ReviewConfigError("repositories must be a mapping")
+    dimension_names: set[str] | None = None
     for repo_key, context in repositories.items():
         if not isinstance(repo_key, str) or not repo_key:
             raise ReviewConfigError("repository keys must be non-empty strings")
         if not isinstance(context, dict):
             raise ReviewConfigError(f"repositories.{repo_key} must be a mapping")
+        if "skills" in context:
+            skills = context["skills"]
+            if not isinstance(skills, list) or any(not isinstance(name, str) or not _ID.fullmatch(name) for name in skills):
+                raise ReviewConfigError(f"repositories.{repo_key}.skills must be a list of dimension names")
+            if len(skills) != len(set(skills)):
+                raise ReviewConfigError(f"repositories.{repo_key}.skills contains duplicates")
+            if skills and dimension_names is None:
+                try:
+                    catalog = yaml.safe_load(DIMENSIONS_PATH.read_text())
+                    dimension_names = {item["name"] for item in catalog["dimensions"]}
+                except (OSError, yaml.YAMLError, TypeError, KeyError) as exc:
+                    raise ReviewConfigError("Cannot read dimensional review catalog") from exc
+            unknown = set(skills) - (dimension_names or set())
+            if unknown:
+                raise ReviewConfigError(f"repositories.{repo_key}.skills has unknown dimensions: {', '.join(sorted(unknown))}")
         for related in _entries(context.get("related", []), f"{repo_key}.related"):
             url = related.get("url")
             relationship = related.get("relationship")
