@@ -353,6 +353,64 @@ def render_ledger(manifest: dict, ledger: list[dict], new_findings: list[dict], 
     return "\n".join(lines) + "\n"
 
 
+def render_custom(manifest: dict, ledger: list[dict], new_findings: list[dict],
+                  update_count: int, data: object) -> tuple[str, list[dict]]:
+    """Validate skill-formatted text against confirmed findings and their anchors."""
+    if not isinstance(data, dict) or not isinstance(data.get("summary_parts"), list):
+        raise EvidenceError("Custom format needs a summary_parts array")
+    entries = {entry["id"]: entry for entry in ledger}
+    added = {finding["id"]: finding for finding in new_findings}
+    seen: set[str] = set()
+    parts = []
+    for part in data["summary_parts"]:
+        if not isinstance(part, dict):
+            raise EvidenceError("Custom summary part must be an object")
+        text = required_text(part.get("text"), "custom summary text")
+        if "fabric-access-" in text:
+            raise EvidenceError("Custom text must not contain bot markers")
+        mentions = set(re.findall(r"\bF[1-9]\d*\b", text))
+        if not mentions <= entries.keys():
+            raise EvidenceError("Custom summary mentions an unconfirmed finding")
+        ident = part.get("finding_id")
+        if ident is not None:
+            if not isinstance(ident, str) or ident not in entries or ident in seen or f"[{ident}]" not in text:
+                raise EvidenceError("Custom summary needs one identified part per ledger finding")
+            seen.add(ident)
+        parts.append(text)
+    if seen != set(entries):
+        raise EvidenceError("Custom summary must cover every ledger finding exactly once")
+    body = "\n\n".join(parts)
+    heading = re.search(r"^#{1,6}\s+.+$", body, re.MULTILINE)
+    if not heading or not re.search(rf"(?<!\w)#{update_count + 1}(?!\d)", heading.group()):
+        raise EvidenceError("Custom review heading must include the review number")
+
+    inline = data.get("inline_comments")
+    if not isinstance(inline, list):
+        raise EvidenceError("Custom format needs an inline_comments array")
+    comments = []
+    inline_ids: set[str] = set()
+    for item in inline:
+        if not isinstance(item, dict):
+            raise EvidenceError("Custom inline comment must be an object")
+        ident = item.get("finding_id")
+        text = required_text(item.get("text"), "custom inline text")
+        if not isinstance(ident, str) or ident not in added or ident in inline_ids or f"[{ident}]" not in text:
+            raise EvidenceError("Custom inline comments must identify each confirmed new finding once")
+        if "fabric-access-" in text or not set(re.findall(r"\bF[1-9]\d*\b", text)) <= entries.keys():
+            raise EvidenceError("Custom inline comment contains a marker or unconfirmed finding")
+        inline_ids.add(ident)
+        location = added[ident]["location"]
+        comments.append({
+            "id": ident, "path": location["file"], "line": location["line"],
+            "side": "RIGHT" if location["side"] == "added" else "LEFT",
+            "format": "custom",
+            "body": text + f"\n\n<!-- fabric-access-finding:{ident} -->",
+        })
+    pr = manifest["pr"]
+    body += f"\n\n<!-- fabric-access-review:{pr['head_sha']}:{pr['base_sha']} -->\n"
+    return body, comments
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("manifest", "findings", "verdicts", "output"):
@@ -364,6 +422,12 @@ def main() -> None:
     parser.add_argument("--ledger-output", type=Path, help="Where to write the updated ledger.json")
     parser.add_argument("--inline-comments-output", type=Path,
                         help="Where to write inline comments rendered from confirmed findings")
+    parser.add_argument("--prepare-custom", type=Path,
+                        help="Write confirmed findings and ledger for skill-based formatting")
+    parser.add_argument("--custom-format", type=Path,
+                        help="Skill-formatted summary parts and inline comments")
+    parser.add_argument("--custom-verdict", type=Path,
+                        help="Independent verification of the custom formatting")
     args = parser.parse_args()
     try:
         manifest = json.loads(args.manifest.read_text())
@@ -371,40 +435,53 @@ def main() -> None:
         findings = validate_findings(json.loads(args.findings.read_text()), manifest, impact)
         accepted = confirmed(findings, json.loads(args.verdicts.read_text()))
         if args.ledger is None:
-            body = render_review(manifest, accepted)
-            args.output.write_text(body)
-            initial_ledger = apply_ledger_updates(
-                [], accepted, [], manifest["pr"]["head_sha"]
+            new_ledger = apply_ledger_updates([], accepted, [], manifest["pr"]["head_sha"])
+            update_count = 0
+        else:
+            if not (args.verifications and args.verification_verdicts and args.ledger_output and args.update_count is not None):
+                raise EvidenceError("--ledger requires --verifications, --verification-verdicts, --update-count, --ledger-output")
+            ledger = json.loads(args.ledger.read_text()) if args.ledger.exists() else []
+            verifications = validate_verifications(json.loads(args.verifications.read_text()), ledger, manifest)
+            resolved = confirm_verifications(verifications, json.loads(args.verification_verdicts.read_text()))
+            new_ledger = apply_ledger_updates(ledger, accepted, resolved, manifest["pr"]["head_sha"])
+            update_count = args.update_count + 1
+        format_name = manifest.get("format", "standard")
+        if format_name == "custom":
+            if args.prepare_custom and not args.custom_format and not args.custom_verdict:
+                args.prepare_custom.write_text(json.dumps({
+                    "findings": accepted, "ledger": new_ledger, "update_count": update_count,
+                    "review_number": update_count + 1,
+                }, indent=2))
+                print(json.dumps({"custom_input_file": str(args.prepare_custom),
+                                  "confirmed": len(accepted), "update_count": update_count}))
+                return
+            if not args.custom_format or not args.custom_verdict or args.prepare_custom:
+                raise EvidenceError("Custom format requires --custom-format and --custom-verdict, or --prepare-custom first")
+            format_verdict = json.loads(args.custom_verdict.read_text())
+            if not isinstance(format_verdict, dict) or format_verdict.get("status") != "confirmed":
+                raise EvidenceError("Custom formatting must be independently confirmed")
+            required_text(format_verdict.get("refutation_check"), "custom verdict.refutation_check")
+            required_text(format_verdict.get("reason"), "custom verdict.reason")
+            body, comments = render_custom(manifest, new_ledger, accepted, update_count,
+                                           json.loads(args.custom_format.read_text()))
+        elif format_name == "standard":
+            if args.custom_format or args.custom_verdict or args.prepare_custom:
+                raise EvidenceError("Custom formatting options require format: custom")
+            body = render_review(manifest, accepted) if args.ledger is None else render_ledger(
+                manifest, new_ledger, accepted, update_count
             )
-            if args.ledger_output:
-                args.ledger_output.write_text(json.dumps(initial_ledger, indent=2))
-            if args.inline_comments_output:
-                args.inline_comments_output.write_text(json.dumps(render_inline_comments(accepted), indent=2))
-            print(json.dumps({
-                "confirmed": len(accepted), "proposed": len(findings),
-                "body_file": str(args.output),
-                "ledger_size": len(initial_ledger),
-                "ledger_file": str(args.ledger_output) if args.ledger_output else None,
-                "update_count": 0,
-                "inline_comments_file": str(args.inline_comments_output) if args.inline_comments_output else None,
-            }))
-            return
-        if not (args.verifications and args.verification_verdicts and args.ledger_output and args.update_count is not None):
-            raise EvidenceError("--ledger requires --verifications, --verification-verdicts, --update-count, --ledger-output")
-        ledger = json.loads(args.ledger.read_text()) if args.ledger.exists() else []
-        verifications = validate_verifications(json.loads(args.verifications.read_text()), ledger, manifest)
-        resolved = confirm_verifications(verifications, json.loads(args.verification_verdicts.read_text()))
-        new_ledger = apply_ledger_updates(ledger, accepted, resolved, manifest["pr"]["head_sha"])
-        update_count = args.update_count + 1
-        body = render_ledger(manifest, new_ledger, accepted, update_count)
+            comments = render_inline_comments(accepted)
+        else:
+            raise EvidenceError("Unknown review format")
         args.output.write_text(body)
-        args.ledger_output.write_text(json.dumps(new_ledger, indent=2))
+        if args.ledger_output:
+            args.ledger_output.write_text(json.dumps(new_ledger, indent=2))
         if args.inline_comments_output:
-            args.inline_comments_output.write_text(json.dumps(render_inline_comments(accepted), indent=2))
+            args.inline_comments_output.write_text(json.dumps(comments, indent=2))
         print(json.dumps({
             "confirmed": len(accepted), "proposed": len(findings),
             "ledger_size": len(new_ledger), "update_count": update_count,
-            "body_file": str(args.output), "ledger_file": str(args.ledger_output),
+            "body_file": str(args.output), "ledger_file": str(args.ledger_output) if args.ledger_output else None,
             "inline_comments_file": str(args.inline_comments_output) if args.inline_comments_output else None,
         }))
     except (EvidenceError, OSError, ValueError, KeyError) as exc:

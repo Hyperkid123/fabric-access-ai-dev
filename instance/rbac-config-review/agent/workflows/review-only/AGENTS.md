@@ -165,15 +165,34 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    task's ledger.json (initial ledger on the first review, merged ledger on
    later reviews). The ledger form also validates re-checks. It renders the
    review body (flat, or with carried-forward status when a ledger is used)
-   and reports the update_count (0 on the first review). The heading is
-   `Review #1` for the first pass and `Review #<update_count + 1>` thereafter.
-   Never hand-edit its output or post an unvalidated draft.
-   The renderer uses bold Markdown labels: `**Location:**`, `**Trigger:**`,
-   `**Impact:**`, `**Evidence:**`, and `**Suggested fix:**`. If inline comment
-   bodies are added to a review, apply the same labels and include both
-   `**Impact:**` and `**Suggested fix:**` in each actionable comment.
-   Prefix each inline comment with its finding ID as `**[F1]**`; use the
-   same ID in the summary heading as `### [F1] ...`.
+   and reports the update_count (0 on the first review).
+
+   For `manifest.format == "standard"`, use the generated standard body and
+   inline comments. Their heading and bold labels follow this workflow's usual
+   format. For `manifest.format == "custom"`, first run the same command
+   with `--prepare-custom <verified.json>`. It writes only confirmed
+   findings, updated ledger, and review number; it does not write a review.
+   Read the guides for the names in `manifest.format_skills` from the plan,
+   and use their requested layout to compose `custom-format.json` from only
+   the verified JSON. Keep the skill's headings and wording conventions;
+   do not add the standard labels, boilerplate, or re-review footer.
+   Include the review number in the skill's first Markdown heading and the
+   same `[F1]` ID wherever a finding is mentioned.
+
+   The custom JSON shape is
+   `{"summary_parts":[{"text":"## Skill review #1"},{"finding_id":"F1","text":"... [F1] ..."}],"inline_comments":[{"finding_id":"F1","text":"... [F1] ..."}]}`.
+   Include one identified summary part per ledger finding, including carried
+   status. Add inline entries only when the selected skill calls for inline
+   comments; otherwise use an empty list. Other summary parts can supply the
+   skill's headings and verdict. Do not include rejected findings or bot markers.
+   Ask `review-verifier` to compare the custom JSON against `verified.json`
+   for unsupported claims and incorrect statuses. Save its single
+   `{"status":"confirmed|refuted|uncertain","refutation_check":"...","reason":"..."}`
+   verdict. Rerun the same evidence command without `--prepare-custom`, adding
+   `--custom-format <custom-format.json> --custom-verdict <verdict.json>`.
+   It validates IDs, anchors, review number, and the formatting verdict, then
+   writes the summary and inline comments in the skill's layout. Never
+   hand-edit the validated output or post an unvalidated draft.
 6. Before posting, persist `pending_publication` with this head/base, the
    validated body, inline comments, output ledger and manifest paths, the
    returned update_count, the cycle watermark, and the command IDs processed
@@ -199,7 +218,8 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    Then run `python3 workflows/review-only/post_inline_comments.py --repo <owner>/<repo>
    --pr <number> --head-sha <head_sha> --comments <inline-comments.json>`.
    It posts each confirmed finding at its changed line, carrying the same ID
-   used in the summary and all five bold finding labels. It updates an existing
+   used in the summary. The standard format uses all five bold finding labels;
+   custom format uses the selected skill's layout. It updates an existing
    same-head comment with the same ID instead of duplicating it. GitHub may
    create separate review records for inline comments; keep tracking the summary
    review's ID. If this step fails, leave the task in progress.

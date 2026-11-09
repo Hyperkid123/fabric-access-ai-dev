@@ -106,7 +106,7 @@ def test_context_builder_generates_a_fresh_skill_for_each_review_run(tmp_path, m
     }))
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(context, "load_config", lambda: {
-        "repositories": {"insights-rbac": {"skills": ["goose-kiss-review"]}}
+        "repositories": {"insights-rbac": {"skills": ["goose-kiss-review"], "format": "custom"}}
     })
     monkeypatch.setattr(context, "update_pr_checkout", lambda *_args: "b" * 40)
 
@@ -125,6 +125,8 @@ def test_context_builder_generates_a_fresh_skill_for_each_review_run(tmp_path, m
     second_skill = next(item for item in second["review_plan"]["passes"] if item["name"] == "goose-kiss-review")
     assert first_skill["guide_path"] != second_skill["guide_path"]
     assert Path(first_skill["guide_path"]).is_file()
+    assert first["format"] == "custom"
+    assert first["format_skills"] == ["goose-kiss-review"]
 
 
 def test_unsupported_template_fails_instead_of_silently_misinterpreting_it():

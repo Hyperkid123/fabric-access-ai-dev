@@ -41,3 +41,24 @@ def test_existing_finding_on_later_page_is_not_reposted(tmp_path, monkeypatch, c
 
     assert json.loads(capsys.readouterr().out) == {"posted": 0, "updated": 0, "unchanged": 1}
     assert len(calls) == 2
+
+
+def test_skill_formatted_inline_comment_can_be_published(tmp_path, monkeypatch, capsys):
+    head = "a" * 40
+    body = "🟠 [F1] Keep the alias.\n\n<!-- fabric-access-finding:F1 -->"
+    comments_file = tmp_path / "comments.json"
+    comments_file.write_text(json.dumps([{"id": "F1", "path": "file.py", "line": 3,
+                                          "side": "RIGHT", "format": "custom", "body": body}]))
+    calls = []
+    monkeypatch.setattr(publisher, "current_head", lambda *_args: head)
+
+    def fake_api(endpoint, method, payload=None):
+        calls.append((method, payload))
+        return [] if method == "GET" else {"id": 123}
+
+    monkeypatch.setattr(publisher, "api", fake_api)
+    monkeypatch.setattr(sys, "argv", ["post_inline_comments.py", "--repo", "org/repo", "--pr", "7",
+                                      "--head-sha", head, "--comments", str(comments_file)])
+    publisher.main()
+    assert json.loads(capsys.readouterr().out)["posted"] == 1
+    assert calls[-1][1]["body"] == body

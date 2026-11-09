@@ -1,6 +1,7 @@
 review_label: dev-bot-review
 repositories:
   insights-rbac:
+    format: custom
     skills:
       - goose-kiss-review
     related:

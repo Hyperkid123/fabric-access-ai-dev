@@ -125,6 +125,10 @@ def load_config(path: Path = CONFIG_PATH) -> dict:
             raise ReviewConfigError("repository keys must be non-empty strings")
         if not isinstance(context, dict):
             raise ReviewConfigError(f"repositories.{repo_key} must be a mapping")
+        if context.get("format", "standard") not in ("standard", "custom"):
+            raise ReviewConfigError(f"repositories.{repo_key}.format must be standard or custom")
+        if context.get("format") == "custom" and not context.get("skills"):
+            raise ReviewConfigError(f"repositories.{repo_key}.format custom needs at least one skill")
         if "skills" in context:
             skills = context["skills"]
             if not isinstance(skills, list) or any(not isinstance(name, str) or not _ID.fullmatch(name) for name in skills):

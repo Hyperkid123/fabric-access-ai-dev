@@ -126,6 +126,85 @@ def test_same_head_rereview_increments_heading_and_retains_finding(tmp_path, mon
     assert json.loads(second_ledger.read_text())[0]["id"] == "F1"
 
 
+def test_custom_format_uses_confirmed_findings_and_preserves_skill_layout(tmp_path, monkeypatch, capsys):
+    manifest = snapshot(tmp_path)
+    impact_path = tmp_path / "impact.json"
+    impact_path.write_text(json.dumps(impact.make_impact_report(manifest, PATCH)))
+    manifest.update({"impact_path": str(impact_path), "format": "custom", "format_skills": ["goose-kiss-review"]})
+
+    def write(name, value):
+        path = tmp_path / name
+        path.write_text(json.dumps(value))
+        return str(path)
+
+    manifest_file = write("manifest.json", manifest)
+    findings_file = write("findings.json", {"findings": [finding("F1"), finding("F2")]})
+    verdicts_file = write("verdicts.json", {"verdicts": [
+        {"finding_id": "F1", "status": "confirmed", "refutation_check": "Checked fallback", "reason": "Missing"},
+        {"finding_id": "F2", "status": "refuted", "refutation_check": "Checked caller", "reason": "Safe"},
+    ]})
+    body, ledger, inline, prepared = (tmp_path / name for name in ("review.md", "ledger.json",
+                                                                    "inline.json", "prepared.json"))
+    common = ["review_evidence.py", "--manifest", manifest_file, "--findings", findings_file,
+              "--verdicts", verdicts_file, "--output", str(body), "--ledger-output", str(ledger),
+              "--inline-comments-output", str(inline)]
+    monkeypatch.setattr(sys, "argv", common + ["--prepare-custom", str(prepared)])
+    evidence.main()
+    capsys.readouterr()
+    accepted = json.loads(prepared.read_text())
+    assert [item["id"] for item in accepted["findings"]] == ["F1"]
+    assert not body.exists()
+
+    custom = {"summary_parts": [
+        {"text": "## KISS & YAGNI Review #1\n\n**Verdict:** simplification needed"},
+        {"finding_id": "F1", "text": "### 🟠 [F1] Old permission disappears\n\nKeep the alias."},
+    ], "inline_comments": []}
+    formatted = write("custom.json", custom)
+    rejected_verdict = write("rejected-format.json", {"status": "refuted", "refutation_check": "Checked claims",
+                                                       "reason": "Introduces an unsupported statement"})
+    monkeypatch.setattr(sys, "argv", common + ["--custom-format", formatted, "--custom-verdict", rejected_verdict])
+    with pytest.raises(SystemExit):
+        evidence.main()
+    capsys.readouterr()
+    assert not body.exists()
+    verdict = write("custom-verdict.json", {"status": "confirmed", "refutation_check": "Checked against findings",
+                                            "reason": "The wording matches the confirmed finding"})
+    monkeypatch.setattr(sys, "argv", common + ["--custom-format", formatted, "--custom-verdict", verdict])
+    evidence.main()
+    capsys.readouterr()
+    rendered = body.read_text()
+    assert rendered.startswith("## KISS & YAGNI Review #1")
+    assert "### 🟠 [F1]" in rendered
+    assert "**Location:**" not in rendered
+    assert "/review-bot re-review" not in rendered
+    posted = json.loads(inline.read_text())
+    assert posted == []
+
+    custom["inline_comments"] = [{"finding_id": "F1", "text": "🟠 [F1] Keep the alias."}]
+    _, posted = evidence.render_custom(manifest, accepted["ledger"], accepted["findings"], 0, custom)
+    assert posted[0]["line"] == 1
+    assert posted[0]["body"].startswith("🟠 [F1] Keep the alias.")
+    assert "fabric-access-finding:F1" in posted[0]["body"]
+
+    custom["summary_parts"].append({"finding_id": "F2", "text": "### [F2] Refuted"})
+    with pytest.raises(evidence.EvidenceError, match="unconfirmed"):
+        evidence.render_custom(manifest, accepted["ledger"], accepted["findings"], 0, custom)
+
+
+def test_custom_rereview_keeps_ledger_ids_and_skill_heading(tmp_path):
+    manifest = snapshot(tmp_path)
+    report = impact.make_impact_report(manifest, PATCH)
+    ledger = evidence.apply_ledger_updates([], accept_one(manifest, report), [], manifest["pr"]["head_sha"])
+    custom = {"summary_parts": [
+        {"text": "## KISS & YAGNI Review #2"},
+        {"finding_id": "F1", "text": "### 🟠 [F1] Still open\n\nThe alias is missing."},
+    ], "inline_comments": []}
+    body, comments = evidence.render_custom(manifest, ledger, [], 1, custom)
+    assert body.startswith("## KISS & YAGNI Review #2")
+    assert "### 🟠 [F1]" in body
+    assert comments == []
+
+
 def test_addressed_verification_with_confirmed_verdict_closes_entry(tmp_path):
     manifest = snapshot(tmp_path)
     report = impact.make_impact_report(manifest, PATCH)

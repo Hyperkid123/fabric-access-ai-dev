@@ -35,6 +35,7 @@ PR = {
 def test_config_accepts_direct_markdown_links_and_known_related_repos():
     config = load_config()
     assert config["review_label"] == "dev-bot-review"
+    assert config["repositories"]["insights-rbac"]["format"] == "custom"
     assert config["repositories"]["insights-rbac"]["skills"] == ["goose-kiss-review"]
     related = config["repositories"]["insights-rbac"]["related"]
     assert {item["id"] for item in related} >= {"rbac-config", "hbi", "kessel-inventory-api"}
@@ -73,6 +74,14 @@ def test_repository_skills_must_be_unique_known_dimensions(tmp_path):
     config["repositories"]["rbac"]["skills"] = ["correctness", "correctness"]
     path.write_text(yaml.safe_dump(config))
     with pytest.raises(ValueError, match="duplicates"):
+        load_config(path)
+    config["repositories"]["rbac"] = {"format": "custom"}
+    path.write_text(yaml.safe_dump(config))
+    with pytest.raises(ValueError, match="needs at least one skill"):
+        load_config(path)
+    config["repositories"]["rbac"] = {"format": "other"}
+    path.write_text(yaml.safe_dump(config))
+    with pytest.raises(ValueError, match="standard or custom"):
         load_config(path)
 
 

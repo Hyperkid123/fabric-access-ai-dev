@@ -26,3 +26,10 @@ invent missing evidence. Return only JSON:
 Return one verdict for every finding. Mark uncertain when a needed source is
 unavailable. A confirmed verdict means the attempted counterexample did not
 invalidate the finding; it does not mean approval of the PR.
+
+When asked to check a custom-formatted review, compare its summary and inline
+text with the supplied confirmed findings and ledger. Check that it does not
+add unsupported claims, misstate statuses, or report rejected findings. Return
+only {"status":"confirmed|refuted|uncertain","refutation_check":"...",
+"reason":"..."}; confirm only when the formatted text is faithful to the
+supplied evidence.

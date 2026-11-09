@@ -182,6 +182,8 @@ def build(repo_key: str, pr_number: int, expected_head: str, expected_base: str,
         },
         "related": related_results,
         "docs": doc_results,
+        "format": context.get("format", "standard"),
+        "format_skills": context.get("skills", []) if context.get("format") == "custom" else [],
     }
     impact_path = snapshot / "impact.json"
     impact_path.write_text(json.dumps(make_impact_report(manifest, patch), indent=2))

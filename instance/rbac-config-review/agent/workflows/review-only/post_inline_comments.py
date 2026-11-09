@@ -71,11 +71,18 @@ def main() -> None:
         body = comment.get("body")
         if not isinstance(ident, str) or not re.fullmatch(r"F[1-9]\d*", ident):
             parser.error("Each inline comment needs an ID in the F1, F2, ... format")
-        if not isinstance(body, str) or not body.startswith(f"**[{ident}]** "):
-            parser.error(f"Inline comment {ident} must start with its finding ID")
-        labels = ("Location", "Trigger", "Impact", "Evidence", "Suggested fix")
-        if any(f"**{label}:**" not in body for label in labels):
-            parser.error(f"Inline comment {ident} must include all bold finding labels")
+        format_name = comment.get("format", "standard")
+        if not isinstance(body, str) or format_name not in {"standard", "custom"}:
+            parser.error(f"Inline comment {ident} has an invalid body or format")
+        if format_name == "custom":
+            if f"[{ident}]" not in body:
+                parser.error(f"Custom inline comment {ident} must include its finding ID")
+        else:
+            if not body.startswith(f"**[{ident}]** "):
+                parser.error(f"Inline comment {ident} must start with its finding ID")
+            labels = ("Location", "Trigger", "Impact", "Evidence", "Suggested fix")
+            if any(f"**{label}:**" not in body for label in labels):
+                parser.error(f"Inline comment {ident} must include all bold finding labels")
         if f"<!-- fabric-access-finding:{ident} -->" not in body:
             parser.error(f"Inline comment {ident} is missing its idempotency marker")
         if not isinstance(comment.get("path"), str) or not comment["path"]:

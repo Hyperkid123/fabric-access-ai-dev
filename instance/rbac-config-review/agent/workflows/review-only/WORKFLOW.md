@@ -72,6 +72,14 @@ would exclude them. For example, `insights-rbac` explicitly includes
 dimensions without duplicates. Unknown or duplicate skill names are
 configuration errors.
 
+Set `format: custom` beside a repository's `skills` to use those skills'
+report layout for its review summary and any inline comments they specify. The runner first
+validates findings, then formats only confirmed findings and ledger entries
+using the selected skills. The verifier checks the formatted text before the
+evidence gate writes it. IDs and the review number remain present; standard
+labels and the standard footer are not added. Repositories without this setting
+use the standard format.
+
 ## The task queue: review_queue.py
 
 Runs every cycle, for $0, before any AI session. For every repo in
@@ -454,8 +462,9 @@ bot_status_update(instance_id="fabric-access-review", state="idle",
   that same review via `PUT .../reviews/<review_id>` instead of posting a new
   one — there is at most one review summary per PR. The inline publisher
   upserts comments by finding ID for the current head, so retries do not
-  duplicate a thread. Summary headings use `### [F1]`; matching inline comments
-  start with `**[F1]**`. GitHub may create separate review records for inline
+  duplicate a thread. In standard format, summary headings use `### [F1]` and
+  matching inline comments start with `**[F1]**`. Custom formats keep the same
+  IDs in the selected skill's layout. GitHub may create separate review records for inline
   comments; the tracked `review_id` remains the summary review's ID. A
   `<!-- fabric-access-review:<head_sha>:<base_sha> -->`
   marker in the summary records which revision it reflects. `feedback_check`
