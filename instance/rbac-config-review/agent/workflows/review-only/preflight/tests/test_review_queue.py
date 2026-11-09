@@ -156,6 +156,7 @@ def test_same_second_request_is_discovered_once_even_without_an_updated_timestam
                      "last_seen_updated_at": PR["updatedAt"], "seen_rereview_comment_ids": []},
     }
     comment = {"id": 101, "body": "/review-bot re-review", "created_at": PR["updatedAt"],
+               "updated_at": PR["updatedAt"],
                "user": {"login": "alice", "type": "User"}}
     monkeypatch.setattr(queue, "list_prs", lambda *_args: [PR])
     monkeypatch.setattr(queue, "fetch_comments", lambda *_args: [comment])

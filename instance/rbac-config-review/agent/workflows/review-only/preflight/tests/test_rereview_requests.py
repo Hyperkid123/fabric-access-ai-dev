@@ -15,7 +15,7 @@ import rereview_requests as requests  # noqa: E402
 
 
 def comment(ident, body, created="2026-11-09T10:00:00Z", user_type="User"):
-    return {"id": ident, "body": body, "created_at": created,
+    return {"id": ident, "body": body, "created_at": created, "updated_at": created,
             "user": {"login": f"user{ident}", "type": user_type}}
 
 
@@ -29,6 +29,7 @@ def test_requests_only_match_new_top_level_commands_in_the_cycle_window():
         comment(6, "/review-bot re-review", user_type="Bot"),
         comment(7, "/review-bot re-review", "2026-11-09T10:00:02Z"),
         comment(8, "/review-bot re-review", "2026-11-09T10:00:01Z"),
+        {**comment(9, "/review-bot re-review"), "updated_at": "2026-11-09T10:00:01Z"},
     ]
     found = requests.requests(comments, "2026-11-09T10:00:00Z", "2026-11-09T10:00:01Z", {2})
     assert [entry["id"] for entry in found] == [3, 8]

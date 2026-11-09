@@ -40,6 +40,7 @@ def requests(comments: list[dict], since: str, through: str, seen_ids: set[int])
                 or not isinstance(author, dict) or author.get("type") != "User"
                 or not isinstance(author.get("login"), str) or not author["login"].strip()
                 or not isinstance(comment.get("body"), str)
+                or comment.get("updated_at") != comment.get("created_at")
                 or comment["body"].strip().casefold() != COMMAND):
             continue
         try:
