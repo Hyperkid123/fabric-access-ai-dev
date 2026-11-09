@@ -120,8 +120,11 @@ Each item under `dimensions` describes one review pass. Common fields are:
   Review passes run sequentially in one OpenCode session, and this field does
   not route a pass to a different model. The current session uses the model in
   `agent/instance.yaml` (`gpt-6-luna`), so catalog entries marked `terra` still
-  run under Luna. Per-dimension Terra usage would require runtime model-routing
-  support; changing this YAML field alone does not enable it.
+  run under Luna. The configured model aliases are `luna` →
+  `rehor-openai/gpt-6-luna` and `terra` → `rehor-openai/gpt-6.1-terra` in the
+  [OpenCode deployment config](https://github.com/RedHatInsights/fabric-access-ai-dev/blob/main/instance/rbac-config-review/opencode-deployment.json).
+  That file makes both models available; the dimension preference still needs
+  dispatch logic to select between them.
 
 `language_extensions` maps changed-file suffixes to language names. Automatic
 selection uses changed paths, the chosen level, `default`, languages, file
@@ -227,6 +230,15 @@ review deployment settings are:
 
 `BOT_LABEL` is passed to the bot as a deployment label; it is separate from the
 GitHub PR label selected by `review-context.yaml: review_label`.
+
+The configured `review-runner` is the primary agent on Luna. The existing
+`review-verifier` subagent is on Terra and is reserved for refuting proposed
+findings. Runner permissions currently allow that verifier subagent only.
+Routing Terra-preference dimensions would require adding a dedicated Terra
+review worker, allowing the runner to invoke it, and changing the workflow to
+dispatch dimensions by their model profile. Keep the verifier's separate
+refutation role. See the [runner config](https://github.com/RedHatInsights/fabric-access-ai-dev/blob/main/instance/rbac-config-review/agent/.opencode/agents/review-runner.md)
+and [verifier config](https://github.com/RedHatInsights/fabric-access-ai-dev/blob/main/instance/rbac-config-review/agent/.opencode/agents/review-verifier.md).
 
 See the root [project README](../../README.md) for the overall bot repository
 and deployment layout, and [the workflow guide](agent/workflows/review-only/WORKFLOW.md)
