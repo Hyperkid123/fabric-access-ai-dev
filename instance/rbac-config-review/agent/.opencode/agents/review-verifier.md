@@ -19,8 +19,9 @@ related-repository code excerpts. Look for guards, compatibility aliases,
 alternative call paths, or tests that disprove the claimed failure. Do not
 invent missing evidence. Check that severity matches
 the consequence, its ordered scenario is realistic and reaches the changed
-code, and each evidence ID is cited beside the statement it supports. Return
-only JSON:
+code, the expected result matches the contract, the actual result is the
+incorrect behavior shown by the pinned sources, and each evidence ID is cited
+beside the statement it supports. Return only JSON:
 
 {"verdicts":[{"finding_id":"F1","status":"confirmed|refuted|uncertain",
 "refutation_check":"specific counterexample or code path checked",
@@ -43,8 +44,9 @@ When asked to check a custom-formatted review, compare each inline comment
 with the supplied confirmed findings, recorded skill results, and that skill's
 pinned guide. Use the comment's `skill` field to select its guide and confirm
 that the finding is attributed to that skill. Check the skill-specific inline layout and attribution, plus the
-required ID, severity, dimension, location, trigger, scenario, impact, linked
-evidence, and suggested fix. The main status summary is always the common
+required ID, severity, dimension, location, trigger, scenario, expected result,
+actual result, impact, linked evidence, and suggested fix. Confirm that the
+actual result is supported and describes incorrect behavior. The main status summary is always the common
 compact format. Check that the review does not add unsupported claims or
 report rejected findings. Return only
 {"status":"confirmed|refuted|uncertain","refutation_check":"...","reason":"...",

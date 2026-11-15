@@ -121,13 +121,15 @@ def main() -> None:
         if format_name == "custom":
             if f"[{ident}]" not in body:
                 parser.error(f"Custom inline comment {ident} must include its finding ID")
-            labels = ("Severity", "Dimension", "Location", "Trigger", "Scenario", "Impact", "Evidence", "Suggested fix")
+            labels = ("Severity", "Dimension", "Location", "Trigger", "Scenario",
+                      "Expected result", "Actual result", "Impact", "Evidence", "Suggested fix")
             if any(f"**{label}:**" not in body for label in labels):
                 parser.error(f"Custom inline comment {ident} must include all bold finding labels and a real scenario")
         else:
             if not body.startswith(f"**[{ident}]** "):
                 parser.error(f"Inline comment {ident} must start with its finding ID")
-            labels = ("Severity", "Dimension", "Location", "Trigger", "Scenario", "Impact", "Evidence", "Suggested fix")
+            labels = ("Severity", "Dimension", "Location", "Trigger", "Scenario",
+                      "Expected result", "Actual result", "Impact", "Evidence", "Suggested fix")
             if any(f"**{label}:**" not in body for label in labels):
                 parser.error(f"Inline comment {ident} must include all bold finding labels")
         if not has_ordered_scenario(body):

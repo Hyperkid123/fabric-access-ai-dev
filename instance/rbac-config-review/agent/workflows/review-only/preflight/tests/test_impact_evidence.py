@@ -53,6 +53,8 @@ def finding():
         "claim": "Old permission disappears", "trigger": "HBI sends inventory.read_hosts",
         "impact": "The RBAC check rejects HBI requests", "suggested_fix": "Retain an alias",
         "scenario": ["HBI sends inventory.read_hosts", "RBAC checks the renamed permission"],
+        "expected_result": "The existing inventory permission remains accepted.",
+        "actual_result": "The renamed permission check rejects the request.",
         "evidence": {"explanation": "HBI still sends the old permission [R1]", "refs": [{
             "id": "R1", "repo": "org/hbi", "sha": "c" * 40, "file": "client.py", "line": 1,
         }]},

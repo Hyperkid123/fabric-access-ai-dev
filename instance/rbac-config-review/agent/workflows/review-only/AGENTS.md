@@ -420,9 +420,11 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    mode to check whether missing information could materially change a review
    conclusion or requested action. Give it the same pinned context and the
    dimension results. It must not assume a defect. Save its JSON as
-   `context-questions.json`; use an empty questions array when context is
-   sufficient. Each question must be one direct question with an impact, a
-   realistic scenario, and cited pinned references. If the detector cannot complete,
+   `context-questions.json`; return zero or more distinct questions based on
+   material gaps, with no fixed count limit, and use an empty array when context
+   is sufficient. Ask one direct question per gap, each with an impact, a
+   realistic scenario, and cited pinned references; publish each as its own
+   comment. If the detector cannot complete,
    record the gap and do not claim that missing context was checked.
 
    Also find author answers to earlier context questions in the cycle window
@@ -437,8 +439,11 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    `missing-context-detector` in `assess_answer` mode, supplying the original
    question, answer, and this cycle's pinned context. Save the exact result in
    `context-responses.json`. Each response needs an impact and a realistic
-   scenario. A follow-up question must be posted in its own comment, separate
-   from the answer explanation.
+   scenario. For `action_required`, include evidence-backed `expected_result`
+   and `actual_result` values; the actual result is the incorrect behavior
+   reached by the scenario. Omit these result fields for `no_change` and
+   `needs_more_context`, where a defect is not established. A follow-up question
+   must be posted in its own comment, separate from the answer explanation.
    Do not treat an answer as a defect by itself; return only the evidence-based
    next action, no-change decision, or one focused follow-up question.
 
@@ -491,6 +496,7 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    "side":"added|removed"},
    "claim":"...","trigger":"specific input or code path","impact":"...",
    "scenario":["step 1","step 2"],
+   "expected_result":"...","actual_result":"...",
    "evidence":{"explanation":"... [R1].","refs":[{"id":"R1",
    "repo":"owner/repo","sha":"40-character pinned SHA","file":"path","line":1}]},
    "suggested_fix":"..."}]}. Write `pr_summary` as one clear sentence of
@@ -502,7 +508,13 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    `suggestion`, and `low` or `info` to `nit`. Use `question` only for a
    missing-context comment, never for an assumed defect. `scenario` must be a
    realistic ordered sequence that reproduces the behavior through the changed
-   code. Do not use hypothetical steps unsupported by pinned context. Give
+   code. `expected_result` states the behavior the contract or user flow
+   requires; `actual_result` states the incorrect behavior that occurs after
+   those steps. Use concrete operations, field names, representative inputs,
+   relevant organization/version/configuration values, and state transitions
+   from pinned context wherever available; avoid generic steps when evidence
+   supports specific ones. Support both outcomes with the pinned evidence. Do
+   not use hypothetical steps unsupported by pinned context. Give
    each evidence reference an `R1`, `R2`, ... ID and place that ID beside the
    statement it supports in `evidence.explanation`; cite each ID exactly once.
    The renderer turns each in-text ID into a direct pinned-source link.
@@ -640,8 +652,12 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    the standard layout by the evidence gate. Inline comments must
    include `[F1]`, `**Dimension:**`, `**Severity:**`, `**Location:**`,
    `**Trigger:**`, `**Scenario:**` with every ordered scenario step,
-   `**Impact:**`, `**Evidence:**` with pinned references beside the claims, and
-   `**Suggested fix:**`. Do not include rejected findings or bot markers. Ask
+   `**Expected result:**`, `**Actual result:**`, `**Impact:**`, `**Evidence:**`
+   with pinned references beside the claims, and `**Suggested fix:**`. The
+   actual result must describe the incorrect behavior the scenario reaches.
+   Do not add expected/actual results to a context question unless pinned
+   evidence establishes both; those questions must continue to state that no
+   defect is assumed. Do not include rejected findings or bot markers. Ask
    `review-verifier` to read
    `verified.json` and every listed guide and recorded pass, then compare the
    custom inline comments for unsupported claims, incorrect attribution, and

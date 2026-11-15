@@ -54,6 +54,8 @@ def finding(ident="F1"):
         "claim": "Old permission disappears", "trigger": "HBI sends inventory.read_hosts",
         "impact": "The RBAC check rejects HBI requests", "suggested_fix": "Retain an alias",
         "scenario": ["HBI sends inventory.read_hosts", "RBAC checks the renamed permission"],
+        "expected_result": "The existing inventory permission remains accepted.",
+        "actual_result": "The renamed permission check rejects the request.",
         "evidence": {"explanation": "HBI still sends the old permission [R1]", "refs": [{
             "id": "R1", "repo": "org/hbi", "sha": "c" * 40, "file": "client.py", "line": 1,
         }]},
@@ -210,6 +212,8 @@ def test_custom_format_uses_confirmed_findings_and_preserves_skill_layout(tmp_pa
         "**Dimension:** goose-kiss-review\n\n**Location:** `api/permissions.py:1`\n\n"
         "**Trigger:** HBI sends inventory.read_hosts\n\n**Scenario:**\n"
         "1. HBI sends inventory.read_hosts\n2. RBAC checks the renamed permission\n\n"
+        "**Expected result:** The existing inventory permission remains accepted.\n\n"
+        "**Actual result:** The renamed permission check rejects the request.\n\n"
         "**Impact:** The RBAC check rejects HBI requests\n\n**Evidence:** HBI still sends the old permission [R1]\n\n"
         "**Suggested fix:** Retain an alias")
     custom = {"inline_comments": [{"finding_id": "F1", "skill": "goose-kiss-review", "text": custom_comment}]}

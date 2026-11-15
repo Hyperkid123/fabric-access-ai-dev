@@ -147,9 +147,13 @@ severity, dimension, resolution state, and separate inline-comment links. It
 ends with contextual-answer, re-review, and verification commands.
 Detailed scenarios, evidence, and fixes belong in the inline comments.
 
-Every finding and feedback comment that describes behavior includes a realistic
-sequence of steps that reproduces it. Cite pinned evidence inline beside the
-claim it supports. Review headings use `Review N` without a `#` before the
+Every confirmed finding and action-required feedback comment that describes
+behavior includes a realistic sequence of steps that reproduces it, the
+expected result, and the incorrect actual result. Cite pinned evidence inline
+beside the claims. Context questions remain separate: they include a scenario
+and why the answer matters, but do not assert expected or actual defect results
+when intent or behavior is not established. An unanswered question is not a
+defect. Review headings use `Review N` without a `#` before the
 number. Use these severity values: `blocking` for issues that should
 stop merge, `suggestion` for meaningful non-blocking improvements, `nit` for
 small polish items, and `question` for missing-context requests.
@@ -176,8 +180,10 @@ retry can detect an answer already posted.
 
 The `missing-context-detector` subagent asks only when missing information
 could change the review conclusion or requested action; it must not assume a
-defect. It posts one question per PR comment with an impact, a realistic
-scenario, a hidden marker, and a Q-ID.
+defect. It can ask zero or more questions in a review: none when context is
+sufficient, or one separate question for each distinct material gap. There is
+no fixed count limit. Each PR comment contains one direct question, its impact,
+a realistic scenario, pinned evidence, a hidden marker, and a Q-ID.
 The PR author answers with `Answer Q-ID: ...`. On the next feedback check, the
 bot checks the answer, verifies the author's organization membership, and
 uses the explanatory-answer skill for “how” or explanation questions. It posts

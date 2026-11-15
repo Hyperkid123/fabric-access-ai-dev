@@ -10,7 +10,8 @@ finding ID in the summary and inline comment. The summary has a one-sentence
 purpose statement, a revision-specific Change risk section, and a Findings
 table with plain-text IDs, severity, dimension, resolution state, and a
 separate link to each inline thread.
-Scenarios, evidence, and fixes stay in the inline comments. The summary ends
+Scenario steps and their expected and actual results, evidence, and fixes stay
+in the inline comments. The summary ends
 with contextual-answer, re-review, and verification commands. Its hidden
 versioned ledger payload is restored from GitHub at the start of later cycles,
 so review history does not depend on an instance-local file surviving.
@@ -65,7 +66,7 @@ feedback cycle so bot-authored updates alone do not start a model session.
 | Review workers | `.opencode/agents/review-terra.md`, `review-luna.md` | **AI** (subagents) | Read-only workers for dimensions routed to Terra or Luna |
 | Risk classifier | `.opencode/agents/review-risk-assessor.md` | **AI** (subagent) | Assesses breaking-change risk once per full review with an explanation and changed-file evidence |
 | Context questions and answers | `context_questions.py` | Script | Posts one marked question per comment and finds PR-author answers for the detector to assess |
-| Missing-context detector | `.opencode/agents/missing-context-detector.md` | **AI** (subagent) | Asks only material questions, then evaluates author answers against pinned context |
+| Missing-context detector | `.opencode/agents/missing-context-detector.md` | **AI** (subagent) | Asks zero or more distinct material questions (one per comment, no fixed cap), then evaluates author answers against pinned context |
 | Explanation quality | `skills/explanatory-answer/SKILL.md` | **AI** (review-runner) | General guidance for direct answers, causal reasoning, evidence, and requested Mermaid diagrams; this workflow maps it to finding fields |
 | Verifier | `.opencode/agents/review-verifier.md` | **AI** (subagent) | Independently tries to refute every proposed finding using only pinned sources |
 | Evidence gate | `review_evidence.py` | Script | Rejects findings without real pinned locations/references; caps at seven; requires one verdict per finding; renders the status template |
@@ -112,9 +113,10 @@ layout for detailed inline comments. Each selected skill must complete and its
 actual result is saved. The runner formats each new confirmed finding from a
 selected formatting skill using its pinned guide; other findings use the
 standard inline layout. The evidence gate enforces the required ID,
-severity, dimension, location, trigger, scenario, impact, evidence, and
-suggested-fix fields. The status summary stays compact and identical across
-formats. An independent verifier checks each skill's inline layout and
+severity, dimension, location, trigger, scenario, expected result, actual
+result, impact, evidence, and suggested-fix fields. The actual result describes
+the incorrect behavior reached by the scenario. The status summary stays
+compact and identical across formats. An independent verifier checks each skill's inline layout and
 attribution before publication.
 
 ## The task queue: review_queue.py
@@ -388,6 +390,8 @@ verifier/evidence steps:
       "trigger": "specific input or code path",
       "impact": "...",
       "scenario": ["step 1", "step 2"],
+      "expected_result": "The client reads the replacement field documented for this response.",
+      "actual_result": "The handler returns the replacement under a different field, so the client cannot read it.",
       "evidence": {
         "explanation": "... [R1].",
         "refs": [{"id": "R1", "repo": "owner/repo", "sha": "40-character pinned SHA", "file": "path", "line": 1}]
@@ -437,7 +441,7 @@ not treat them as issue links.
 The hidden payload is not private data: GitHub returns HTML-comment text in
 the review body API to anyone who can access the PR. It stores only the fields
 needed to resume the review. Open findings contain the same claim, scenario,
-impact, suggested fix, and pinned references already shown in their inline
+expected and actual results, impact, suggested fix, and pinned references already shown in their inline
 comments, with raw source-line text removed. Addressed findings are reduced to
 ID/status tombstones so IDs are never reused. Verifier notes and other
 unpublished analysis are not included. Never include credentials, secrets, or
@@ -469,7 +473,9 @@ The general `explanatory-answer` skill supplies the writing approach. This
 workflow's finding schema maps a direct answer to `claim`, the circumstance to
 `trigger`, the why and reasoning to `evidence.explanation` with pinned
 `evidence.refs`, the consequence to `impact`, and the correction to
-`suggested_fix`. Re-check explanations use the same causal chain. PR findings
+`suggested_fix`. Each finding also states the expected behavior and the
+incorrect actual behavior reached by its scenario. Re-check explanations use
+the same causal chain. PR findings
 use prose because the summary is compact and inline threads have limited width.
 During a feedback check, a verified member can ask how or why a finding occurs.
 The bot answers from pinned context in the same inline thread or as a top-level
@@ -557,10 +563,12 @@ remain readable via the GitHub API. They are public transports for review state,
 not access-control boundaries. A risk assessment is tied to the head and base
 SHAs the classifier inspected.
 
-The linked inline comment carries the evidence needed to act:
+The linked inline comment carries the evidence needed to act. For example, if
+the documentation describes a V2 rejection response differently from the
+handler, make the trigger and each client step concrete:
 
 ```markdown
-**[F1]** The response field name does not match the handler.
+**[F1]** V2 rejection response hides the replacement operation from clients.
 
 **Severity:** blocking
 
@@ -568,17 +576,22 @@ The linked inline comment carries the evidence needed to act:
 
 **Location:** `api/response.py:42`
 
-**Trigger:** A client reads the replacement field after the handler rejects a V1 request.
+**Trigger:** A client calls a tool unavailable to a V2 organization and follows the documented response shape.
 
 **Scenario:**
-1. Send a V1 request to the changed handler.
-2. Read the replacement field from the response using the documented name.
+1. Using an organization configured for V2, request a tool the handler rejects for V2 organizations.
+2. The handler returns `error: "tool_not_available_for_v2_org"`, puts the explanation in `message`, and names the replacement in `use_instead`.
+3. The client follows the docs and reads `v2_alternative` for the replacement; that field is absent, so the client has no operation to call.
+
+**Expected result:** The response follows the documented shape: `error` contains the human-readable explanation and `v2_alternative` contains the replacement operation.
+
+**Actual result:** `error` contains only `tool_not_available_for_v2_org`; the explanation is in `message` and the replacement is in `use_instead`, so a client following the docs finds neither value where expected.
 
 **Impact:** The client cannot select the supported V2 operation.
 
-**Evidence:** The handler emits `use_instead` at [api/response.py:42](https://github.com/org/repo/blob/<sha>/api/response.py#L42), while the linked documentation names another field at [docs/api.md:12](https://github.com/org/repo/blob/<sha>/docs/api.md#L12).
+**Evidence:** The pinned handler returns the machine code in `error`, explanation in `message`, and replacement in `use_instead` ([handler source](https://github.com/org/repo/blob/<sha>/api/response.py#L42)). The pinned docs describe `error` as the explanation and `v2_alternative` as the replacement ([API docs](https://github.com/org/repo/blob/<sha>/docs/api.md#L12)).
 
-**Suggested fix:** Document the field emitted by the handler.
+**Suggested fix:** Align the handler and docs: either emit the documented fields or update the docs and clients to use `message` and `use_instead`.
 
 <!-- dev-review-bot:fabric-access-finding:F1 -->
 
@@ -600,7 +613,10 @@ and pinned evidence. It does not appear in the finding count. Every bot comment
 except the status review has the same footer; approval and context questions
 also include their exact answer command. Before the first status review exists,
 the footer says status is pending. The footer sync updates earlier comments
-with the direct status link after publication.
+with the direct status link after publication. An `action_required` answer
+comment also states the expected and incorrect actual results; `no_change`,
+`needs_more_context`, and initial context questions omit those results unless
+the pinned evidence establishes them.
 
 The summary and inline thread are the PR review comments (GitHub). Separately,
 `bot_status_update`

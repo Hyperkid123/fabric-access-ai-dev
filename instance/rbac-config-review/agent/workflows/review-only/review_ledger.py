@@ -145,6 +145,9 @@ def public_ledger(ledger: object) -> list[dict]:
         }
         for key in ("claim", "trigger", "impact", "suggested_fix"):
             public[key] = _text(entry.get(key), f"{field}.{key}")
+        for key in ("expected_result", "actual_result"):
+            if key in entry:
+                public[key] = _text(entry.get(key), f"{field}.{key}")
         scenario = entry.get("scenario")
         if (not isinstance(scenario, list)
                 or any(not isinstance(step, str) or not step.strip() for step in scenario)):
