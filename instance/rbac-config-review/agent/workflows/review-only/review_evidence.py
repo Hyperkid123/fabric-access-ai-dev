@@ -190,14 +190,18 @@ def validate_context_responses(data: object, manifest: dict) -> list[dict]:
         instruction = item.get("instruction")
         if decision == "action_required":
             instruction = required_text(instruction, "response.instruction")
+            expected_result = required_text(item.get("expected_result"), "response.expected_result")
+            actual_result = required_text(item.get("actual_result"), "response.actual_result")
             if severity not in {"blocking", "suggestion", "nit"}:
                 raise EvidenceError("An action-required response needs blocking, suggestion, or nit severity")
         elif decision == "no_change":
             instruction = "No code change is indicated by this answer."
+            expected_result = actual_result = None
             if severity != "question":
                 raise EvidenceError("A no-change response must use question severity")
         else:
             instruction = required_text(item.get("follow_up_question"), "response.follow_up_question")
+            expected_result = actual_result = None
             if instruction.count("?") != 1 or not instruction.endswith("?") or severity != "question":
                 raise EvidenceError("A follow-up response must contain one question and question severity")
         responses.append({
@@ -211,6 +215,8 @@ def validate_context_responses(data: object, manifest: dict) -> list[dict]:
             "example": (required_text(item["example"], "response.example")
                         if item.get("example") is not None else None),
             "instruction": instruction,
+            "expected_result": expected_result,
+            "actual_result": actual_result,
             "scenario": validate_scenario(item.get("scenario"), "response.scenario"),
             "evidence": validate_evidence(item.get("evidence"), manifest, "response.evidence"),
         })
@@ -248,6 +254,11 @@ def render_context_response_comments(responses: list[dict]) -> list[dict]:
                     f"{index}. {step}" for index, step in enumerate(response["scenario"], 1)
                 ),
             ])
+            if response["decision"] == "action_required":
+                parts.extend([
+                    f"**Expected result:** {response['expected_result']}",
+                    f"**Actual result:** {response['actual_result']}",
+                ])
         parts.append(f"<!-- dev-review-bot:context-response:{question_id}:{answer_id} -->")
         body = "\n\n".join(parts)
         comments.append({"id": f"{question_id}:{answer_id}", "body": body})
@@ -302,6 +313,8 @@ def validate_findings(data: object, manifest: dict, impact: dict) -> list[dict]:
                 raise EvidenceError("Findings need unique source_dimensions from the review plan")
         for field in ("claim", "trigger", "impact", "suggested_fix"):
             required_text(finding.get(field), f"finding.{field}")
+        expected_result = required_text(finding.get("expected_result"), "finding.expected_result")
+        actual_result = required_text(finding.get("actual_result"), "finding.actual_result")
         scenario = validate_scenario(finding.get("scenario"), "finding.scenario")
         location = finding.get("location")
         if not isinstance(location, dict):
@@ -326,7 +339,10 @@ def validate_findings(data: object, manifest: dict, impact: dict) -> list[dict]:
         refs = evidence["refs"]
         if category == "cross_repo" and not any(ref["repo"] != manifest["pr"]["repo"] for ref in refs):
             raise EvidenceError("Cross-repository finding needs a related-repository code reference")
-        validated.append({**finding, "severity": severity, "scenario": [step.strip() for step in scenario],
+        validated.append({**finding, "severity": severity,
+                          "expected_result": expected_result,
+                          "actual_result": actual_result,
+                          "scenario": [step.strip() for step in scenario],
                           "location": location_ref, "refs": refs,
                           "evidence": evidence})
     return validated
@@ -367,6 +383,8 @@ def render_inline_comments(findings: list[dict]) -> list[dict]:
             "**Scenario:**\n" + "\n".join(
                 f"{index}. {step}" for index, step in enumerate(finding["scenario"], 1)
             ),
+            f"**Expected result:** {finding['expected_result']}",
+            f"**Actual result:** {finding['actual_result']}",
             f"**Impact:** {finding['impact']}",
             f"**Evidence:** {link_evidence(finding['evidence']['explanation'], finding['refs'])}",
         ]
@@ -790,13 +808,17 @@ def render_custom(manifest: dict, ledger: list[dict], new_findings: list[dict],
         if f"**Dimension:** {dimension_label(added[ident])}" not in text:
             raise EvidenceError("Custom inline comment must state its dimension")
         finding = added[ident]
-        labels = ("Severity", "Dimension", "Location", "Trigger", "Scenario", "Impact", "Evidence", "Suggested fix")
+        labels = ("Severity", "Dimension", "Location", "Trigger", "Scenario",
+                  "Expected result", "Actual result", "Impact", "Evidence", "Suggested fix")
         if any(f"**{label}:**" not in text for label in labels):
             raise EvidenceError("Custom inline comment must include all bold finding labels and a real scenario")
         if f"**Severity:** {finding['severity']}" not in text:
             raise EvidenceError("Custom inline comment must use the validated severity")
         if not contains_in_order(text, finding["scenario"]):
             raise EvidenceError("Custom inline comment must include every scenario step in order")
+        if (f"**Expected result:** {finding['expected_result']}" not in text
+                or f"**Actual result:** {finding['actual_result']}" not in text):
+            raise EvidenceError("Custom inline comment must include the validated expected and actual results")
         if any(text.count(f"[{ref['id']}]") != 1 for ref in finding["refs"]):
             raise EvidenceError("Custom inline comment must cite each evidence ID once beside its supporting claim")
         if all("id" in ref and "url" in ref for ref in finding["refs"]):

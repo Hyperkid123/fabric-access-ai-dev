@@ -44,6 +44,8 @@ For `mode: assess_answer`, evaluate the author's answer and return exactly:
 "severity":"blocking|suggestion|nit|question","summary":"direct answer...",
 "why_or_how":"mechanism in a clear sequence...","impact":"...",
 "example":"optional...",
+"expected_result":"required for action_required",
+"actual_result":"required for action_required",
 "instruction":"...","follow_up_question":"... ?",
 "scenario":["step 1", "step 2"],
 "evidence":{"explanation":"... [R1].",
@@ -57,6 +59,11 @@ Use `needs_more_context` only when the answer still leaves one material
 question; set `severity` to `question` and include one direct
 `follow_up_question`. Include a concrete next step in `instruction` for
 `action_required`. Include a realistic sequence of steps in every `scenario`.
+For `action_required`, also provide `expected_result` (the behavior the
+contract or user flow requires) and `actual_result` (the incorrect behavior
+that occurs in that scenario), each supported by the pinned evidence. Omit
+these fields for `no_change` and `needs_more_context`; do not imply a defect
+when the available context does not establish one.
 Structure each response as a direct answer (`summary`), mechanism
 (`why_or_how`), evidence-backed reasoning, optional useful example, and
 implication (`instruction` or the follow-up). Use the explanatory-answer skill
