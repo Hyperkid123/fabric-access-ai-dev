@@ -294,25 +294,201 @@ enabled for a repository through its `skills` list.
 
 ## How a review runs
 
-```text
-project-repos.json + review-context.yaml
-                 │
-                 ▼
-  Find open labeled PRs and check review authorization
-                 │
-                 ▼
-  Pin PR head/base and build review context
-  (diff, related repositories, docs, impact candidates)
-                 │
-                 ▼
-  Select dimensions → review changed code → verify findings
-                 │
-                 ▼
-  Check changed-line anchors and pinned evidence
-                 │
-                 ▼
-  Publish/update GitHub summary and inline comments
+```mermaid
+flowchart TD
+    Config["project-repos.json<br/>review-context.yaml<br/>dimensions.yaml"] --> Queue
+    PR["GitHub PRs, label events,<br/>comments, reviews, SHAs"] --> Queue
+    Memory[("bot-memory task state")] <--> Queue
+    Queue["1. Queue and authorization<br/>one eligible PR per cycle<br/>AI cost: $0"] --> Context
+    PR --> Context["2. Pin review context<br/>diff, checkout, related repos, docs<br/>AI cost: $0"]
+    Context --> Snapshot["manifest.json<br/>impact.json"]
+    Snapshot --> Select["3. Select applicable dimensions<br/>write review-plan.json<br/>AI cost: $0"]
+    Select --> Runner["Luna review-runner<br/>one orchestration session, multiple turns<br/>context grows as results accumulate"]
+    Runner --> Workers["4. Dimension AI passes<br/>up to 19 enabled by default, plus configured skills<br/>likely highest combined spend: large context repeats per pass"]
+    Workers --> Results["Per-dimension JSON<br/>findings + pass status"]
+    Results --> Merge["5. Luna runner merges results<br/>deduplicate + consensus rank<br/>medium cost: all pass outputs"]
+    Merge --> Detector["Terra missing-context check<br/>one detect pass; more if answers arrive<br/>medium context: snapshot + pass results"]
+    Merge --> Verify["6. Luna verifier<br/>checks proposed findings and prior fixes<br/>cost grows with finding count and evidence"]
+    Snapshot --> Workers
+    Snapshot --> Detector
+    Prior["Prior public-safe ledger<br/>in GitHub status review"] --> Runner
+    Prior --> Verify
+    Detector --> Publish
+    Verify --> Evidence["review_evidence.py<br/>AI cost: $0"]
+    Evidence --> Publish["7. Python publishers<br/>AI cost: $0"]
+    Publish --> GitHub["GitHub PR review"]
+    Publish --> Memory
+    GitHub -.->|next cycle restores ledger| Prior
+
+    classDef script fill:#e2e3e5,stroke:#6c757d,color:#000;
+    classDef model fill:#f8d7da,stroke:#a94442,color:#000;
+    class Queue,Context,Select,Evidence,Publish script;
+    class Runner,Workers,Merge,Detector,Verify model;
 ```
+
+Gray boxes are deterministic scripts; the red boxes call models. AI cost labels
+are relative token-spend estimates, not dollar prices. The bot reviews one PR
+per cycle. GitHub's status review carries the durable finding ledger;
+bot-memory tracks task progress and review metadata.
+
+#### AI cost and context by stage
+
+| AI stage | Calls per full review | Relative spend | What makes its context large |
+|---|---:|---|---|
+| Luna `review-runner` | One session with multiple turns | Medium to high | Workflow instructions, pinned PR snapshot, dimension plan, then accumulated worker outputs and prior findings. |
+| Terra/Luna dimension workers | One per selected dimension; up to 19 default-enabled dimensions, plus repository-required skills | **Likely highest combined spend** | Each pass receives the PR diff and relevant checkout sources, related-repository snapshots, linked docs, impact candidates, and its own reviewer guide. Most of this shared context is sent again for each pass. |
+| Terra missing-context detector | One detection pass; another assessment when new author answers need review | Medium | Pinned snapshot plus dimension findings; answer assessment also adds the original question and author response. |
+| Luna verifier | At least one pass for proposed findings; extra checks for addressed findings or custom formatting | Medium; rises with findings | Proposed findings, evidence excerpts and pinned references; re-review also carries prior open ledger entries. |
+| Queue, context build, dimension selection, evidence validation, publishing | No model calls | **$0 AI** | These are Python/API/git operations. They can use compute or API quota, but consume no model tokens. |
+
+The current catalog has 19 default-enabled dimensions: 6 prefer Terra and 13
+prefer Luna. If all apply, those 19 dimension-worker calls are in addition to
+the runner, detector, and verifier work. Applicability filters often reduce
+the number that run. A repository can add required skills, so 19 is not a hard
+maximum. A no-work preflight ends before the model session and has $0 AI cost.
+
+The largest context driver is **multiplication**: the changed code and related
+context are reused across the selected dimension calls. Long diffs, large
+related-repo snapshots, many linked documents, many findings, and a large open
+ledger each increase tokens. The main concrete levers are reducing selected
+dimensions with a lower review level or repository-specific required skills,
+and narrowing declared context to the sources needed for that repository.
+Those choices trade coverage or context breadth for lower spend.
+
+These are relative estimates. The bot exports USD and input/output/cache token
+counters by cycle, model, label, and workflow; it does not attribute usage to
+individual review stages or dimensions. Exact USD cost needs an observed
+cycle's usage and the proxy's rates for Terra and Luna. Cached input may reduce
+the repeated-context charge when the proxy reports cache hits.
+
+### Project coordinator cost path
+
+The project coordinator in [PR #124](https://github.com/RedHatInsights/fabric-access-ai-dev/pull/124)
+has a different cost shape from dimensional review. Its scheduled preflight
+uses Jira and memory APIs plus Python checks to compare a project snapshot;
+those steps make no model call. An unchanged project is skipped. A changed
+control ticket starts the `gpt-6.1-sol` coordinator workflow, which handles one
+control ticket per cycle. Jira reads and validated Jira writes are tools in
+that session, so tool round trips can create additional model turns even
+though the scripts themselves do not run a model.
+
+```mermaid
+flowchart TD
+    Schedule["Scheduled cycle"] --> Preflight["Read-only preflight<br/>Jira + memory + Team/phase/dependency checks<br/>AI cost: $0"]
+    Preflight -->|unchanged snapshot| Skip["Skip project<br/>AI cost: $0"]
+    Preflight -->|new or changed project| Snapshot["Coordinator input<br/>parent + control + same-Team child summaries<br/>gaps, phase, links, statuses, new comments"]
+    Snapshot --> Agent["Project coordinator<br/>GPT-6.1 Sol, medium reasoning<br/>one control ticket per cycle"]
+    Agent <--> Reads["Jira/MCP rereads<br/>parent, control, relevant children<br/>returned issue data joins model context"]
+    Agent --> Gate["Check plan gate<br/>phase:01, dependencies, acceptance criteria,<br/>Team and allowed repo routing"]
+    Gate -->|plan incomplete| Ask["Comment with gaps/questions<br/>set needs-plan or blocked"]
+    Gate -->|ticket ready| Handoff["Choose repo and hand off<br/>implementation label + repo label"]
+    Agent --> Actions["Validated Jira actions<br/>comments, state, POC or proposed ticket"]
+    Ask --> Actions
+    Handoff --> Actions
+    Actions --> Memory["Save snapshot and processed comments<br/>AI cost: $0 for action scripts"]
+    Memory -.->|next scheduled cycle| Schedule
+
+    classDef script fill:#e2e3e5,stroke:#6c757d,color:#000;
+    classDef model fill:#f8d7da,stroke:#a94442,color:#000;
+    class Preflight,Skip,Actions,Memory script;
+    class Snapshot,Agent,Reads,Gate,Ask,Handoff model;
+```
+
+| Coordinator stage | AI work and relative cost | Main context or cost driver |
+|---|---|---|
+| Scheduled preflight | No model call; $0 AI | Searches control tickets, reads their parent and same-Team children, checks project state, and compares a fingerprint. Jira/API and compute usage may still apply. |
+| Coordinator reasoning | One orchestration session for a changed project; tool round trips may add turns. Usually lower total spend than a full dimensional review, but can be medium or high for a large project. | Workflow instructions plus parent and control details, same-Team child summaries/descriptions (preflight truncates each to 2,000 characters), phases, statuses, labels, links, blockers, and new control comments. The agent also rereads relevant Jira issues; those responses add to context. |
+| Jira actions and memory update | No extra model call for the validated scripts; $0 direct AI | Comment, state-label, repo/implementation-label handoff, and requested POC/ticket creation are deterministic after the agent decides what to do. Their results can be included in later model turns. |
+| Unchanged project | No model session; $0 AI | Snapshot fingerprint matches saved memory state. Human changes to the parent, control, same-Team children, or control comments can start a new cycle. |
+
+For the coordinator, the largest context driver is **project size and history**:
+more same-Team children, longer ticket descriptions, many dependency links,
+and accumulated control-ticket comments. Each POC request in a new control
+comment can trigger another coordinator cycle. It does not fan the same project
+context out across 19 dimension workers, so its cost is usually dominated by
+one growing orchestration context instead of repeated parallel review inputs.
+The coordinator only creates a POC when the user explicitly asks in a new
+control-ticket comment; the creation action itself does not add another model
+call.
+
+The values above describe where tokens are spent, not a quoted dollar amount.
+For both bots, exact per-stage USD needs a cycle-level input/output/cache-token
+measurement and the active model proxy rates. The deterministic scripts have
+no AI inference cost; any data they return to an agent can still contribute
+tokens to that agent's prompt.
+
+### Dimensional review, step by step
+
+1. **Prepare one pinned input.** The queue picks a PR only when its review is
+   authorized: a new `dev-bot-review` label event authorizes the first full
+   pass; a changed PR revision or `/review-bot re-review` needs verified
+   organization-member approval for a full review. `/review-bot verify` is a
+   separate member-authorized path that checks prior findings only. Preflight supplies the repository, PR number,
+   head and base SHAs, review kind, and comment IDs. `build_context.py` checks
+   out that exact revision and creates `manifest.json` and `impact.json`. The
+   manifest contains PR metadata, diff and checkout paths, pinned
+   related-repository SHAs, and pinned document links. `impact.json` contains
+   changed identifiers and textual matches in related repositories. Those
+   matches are leads for review, never findings on their own.
+2. **Choose dimensions.** `review_skills.py` compares changed paths and file
+   extensions with `dimensions.yaml`. The default level is `high`, meaning
+   every applicable, default-enabled dimension. A dimension can be filtered
+   by language, file pattern, level, or documentation-only rules. Repository
+   `skills` are always included; `--focus` selects its named dimensions plus
+   repository skills. The result, `review-plan.json`, records each selected
+   dimension, its local or generated guide, model preference, and worker
+   (`review-terra` or `review-luna`).
+3. **Run independent passes.** The Luna `review-runner` loads each guide and
+   passes it the same pinned PR context, diff, related-repository snapshots,
+   linked documents, and impact candidates. Each worker checks its own concern,
+   such as correctness, security, API contracts, performance, or database
+   behavior. Up to four passes run concurrently; the runner waits for each
+   batch and records the result under its dimension. Each result is JSON with
+   a dimension name, `pass`/`warn`/`fail`, summary, and findings. Findings need
+   confidence of at least `0.7`, an impact, and a source location. A failed
+   worker is recorded as failed; the bot does not silently switch models.
+4. **Combine overlapping findings.** The runner collects findings across
+   dimensions. It groups similar reports from different dimensions when their
+   word-set Jaccard similarity is at least `0.4`, or they refer to the same
+   file within five lines. It keeps the report with the longest evidence as
+   canonical, records which dimensions agreed, and ranks consensus findings
+   first. Three agreeing dimensions count as consensus; five agreeing
+   dimensions can raise a low-severity item to medium. The workflow converts
+   retained findings to stable IDs such as `F1` and keeps no more than seven
+   for publication.
+5. **Challenge and validate.** `review-verifier` independently tries to
+   refute each proposed finding using pinned sources. Then
+   `review_evidence.py` requires a verdict for every finding, checks that its
+   location is in the PR diff, and checks every evidence reference against the
+   SHAs and files in `manifest.json`. Unsupported reports are excluded. The
+   missing-context detector separately writes material questions; it does not
+   turn an unanswered question or an impact candidate into a defect.
+6. **Carry prior findings forward.** On later passes, the previous ledger's
+   open findings are checked against the new pinned revision. A finding
+   changes to addressed only when the verifier confirms evidence that it was
+   fixed. Finding IDs are retained, including addressed IDs, so an ID is never
+   reused.
+7. **Publish and save progress.** The bot posts or updates an anchored inline
+   thread for each confirmed finding, posts context questions separately,
+   then creates or updates one status summary with finding IDs, severity,
+   dimension, state, and inline links. The status review includes a compressed
+   public-safe ledger in an HTML comment; GitHub users with PR access can read
+   that content through its API. The bot updates task state with the review ID,
+   reviewed SHAs, counters, and comment watermarks. The task becomes `done`
+   only after GitHub confirms that the PR merged.
+
+| Stage | Main data passed forward |
+|---|---|
+| Queue | Repository key, PR number, head/base SHAs, work kind, authorization and feedback comment IDs, task metadata, restored prior ledger |
+| Context | `manifest.json` with pinned PR and related sources; `impact.json` with changed files, identifiers, and candidate usages |
+| Dimension plan | `review-plan.json`: dimension name, guide path, model preference, worker, plus generated guide/context for a selected recipe |
+| Dimension workers | Per-dimension JSON: pass status, summary, structured raw findings with location, confidence, impact, and source attribution |
+| Verification and evidence | Normalized findings, verifier verdicts, context questions/responses, validated `publication.json`, `inline-comments.json`, and updated `ledger.json` |
+| Publication | GitHub inline threads, context comments, one status summary; task state stores review identity, SHA pair, lifecycle, and watermarks |
+
+For exact command usage, finding schemas, retry handling, and file locations,
+see the [review workflow guide](agent/workflows/review-only/WORKFLOW.md) and
+[dimensional-review skill](agent/skills/dimensional-review/SKILL.md).
 
 The queue only considers GitHub repositories in `project-repos.json`, open PRs
 with `review_label`, and at most one eligible PR in a cycle. A newly added

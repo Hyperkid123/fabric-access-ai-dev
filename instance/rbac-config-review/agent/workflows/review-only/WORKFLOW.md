@@ -32,7 +32,8 @@ flowchart LR
     subgraph Cycle["one cycle, at most one PR"]
         A["Preflight<br/>(review_queue.py)"] --> B["Context<br/>(build_context.py)"]
         B --> C["Review<br/>(Terra/Luna by dimension)"]
-        C --> D["Verify<br/>(review-verifier)"]
+        C --> M["Check missing context<br/>(missing-context-detector)"]
+        M --> D["Verify<br/>(review-verifier)"]
         D --> R["Classify risk<br/>(review-risk-assessor)"]
         R --> E["Publish<br/>(comments, summary, risk label)"]
     end
@@ -42,13 +43,13 @@ flowchart LR
     classDef script fill:#e2e3e5,stroke:#6c757d,color:#000;
     classDef ai fill:#f8d7da,stroke:#a94442,color:#000;
     class A,B,E script;
-    class C,T,D,R,M ai;
+    class C,M,D,R ai;
 ```
 
 Gray = deterministic script, $0, no model call. Red = an LLM reasons over
-pinned context and can be wrong. `C`, `T`, `D`, and `M` spend tokens during a review;
-`A`, `B`, and `E` are plain Python. Preflight checks comments before a feedback
-cycle so bot-authored updates alone do not start a model session.
+pinned context and can be wrong. `C`, `M`, `D`, and `R` spend tokens during a
+review; `A`, `B`, and `E` are plain Python. Preflight checks comments before a
+feedback cycle so bot-authored updates alone do not start a model session.
 
 | Piece | File | Script or AI | Role |
 |---|---|---|---|
