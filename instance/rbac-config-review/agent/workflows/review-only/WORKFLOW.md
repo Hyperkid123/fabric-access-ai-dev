@@ -66,7 +66,7 @@ feedback cycle so bot-authored updates alone do not start a model session.
 | Review workers | `.opencode/agents/review-terra.md`, `review-luna.md` | **AI** (subagents) | Read-only workers for dimensions routed to Terra or Luna |
 | Risk classifier | `.opencode/agents/review-risk-assessor.md` | **AI** (subagent) | Assesses breaking-change risk once per full review with an explanation and changed-file evidence |
 | Context questions and answers | `context_questions.py` | Script | Posts one marked question per comment and finds PR-author answers for the detector to assess |
-| Missing-context detector | `.opencode/agents/missing-context-detector.md` | **AI** (subagent) | Asks only material questions, then evaluates author answers against pinned context |
+| Missing-context detector | `.opencode/agents/missing-context-detector.md` | **AI** (subagent) | Asks zero or more distinct material questions (one per comment, no fixed cap), then evaluates author answers against pinned context |
 | Explanation quality | `skills/explanatory-answer/SKILL.md` | **AI** (review-runner) | General guidance for direct answers, causal reasoning, evidence, and requested Mermaid diagrams; this workflow maps it to finding fields |
 | Verifier | `.opencode/agents/review-verifier.md` | **AI** (subagent) | Independently tries to refute every proposed finding using only pinned sources |
 | Evidence gate | `review_evidence.py` | Script | Rejects findings without real pinned locations/references; caps at seven; requires one verdict per finding; renders the status template |
@@ -563,10 +563,12 @@ remain readable via the GitHub API. They are public transports for review state,
 not access-control boundaries. A risk assessment is tied to the head and base
 SHAs the classifier inspected.
 
-The linked inline comment carries the evidence needed to act:
+The linked inline comment carries the evidence needed to act. For example, if
+the documentation describes a V2 rejection response differently from the
+handler, make the trigger and each client step concrete:
 
 ```markdown
-**[F1]** The response field name does not match the handler.
+**[F1]** V2 rejection response hides the replacement operation from clients.
 
 **Severity:** blocking
 
@@ -574,21 +576,22 @@ The linked inline comment carries the evidence needed to act:
 
 **Location:** `api/response.py:42`
 
-**Trigger:** A client reads the replacement field after the handler rejects a V1 request.
+**Trigger:** A client calls a tool unavailable to a V2 organization and follows the documented response shape.
 
 **Scenario:**
-1. Send a V1 request to the changed handler.
-2. Read the replacement field from the response using the documented name.
+1. Using an organization configured for V2, request a tool the handler rejects for V2 organizations.
+2. The handler returns `error: "tool_not_available_for_v2_org"`, puts the explanation in `message`, and names the replacement in `use_instead`.
+3. The client follows the docs and reads `v2_alternative` for the replacement; that field is absent, so the client has no operation to call.
 
-**Expected result:** The client reads the documented replacement field.
+**Expected result:** The response follows the documented shape: `error` contains the human-readable explanation and `v2_alternative` contains the replacement operation.
 
-**Actual result:** The handler returns the replacement under a different field, so the client cannot read it.
+**Actual result:** `error` contains only `tool_not_available_for_v2_org`; the explanation is in `message` and the replacement is in `use_instead`, so a client following the docs finds neither value where expected.
 
 **Impact:** The client cannot select the supported V2 operation.
 
-**Evidence:** The handler emits `use_instead` at [api/response.py:42](https://github.com/org/repo/blob/<sha>/api/response.py#L42), while the linked documentation names another field at [docs/api.md:12](https://github.com/org/repo/blob/<sha>/docs/api.md#L12).
+**Evidence:** The pinned handler returns the machine code in `error`, explanation in `message`, and replacement in `use_instead` ([handler source](https://github.com/org/repo/blob/<sha>/api/response.py#L42)). The pinned docs describe `error` as the explanation and `v2_alternative` as the replacement ([API docs](https://github.com/org/repo/blob/<sha>/docs/api.md#L12)).
 
-**Suggested fix:** Document the field emitted by the handler.
+**Suggested fix:** Align the handler and docs: either emit the documented fields or update the docs and clients to use `message` and `use_instead`.
 
 <!-- dev-review-bot:fabric-access-finding:F1 -->
 

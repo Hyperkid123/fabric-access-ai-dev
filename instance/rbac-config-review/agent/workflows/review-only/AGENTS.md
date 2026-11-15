@@ -420,9 +420,11 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    mode to check whether missing information could materially change a review
    conclusion or requested action. Give it the same pinned context and the
    dimension results. It must not assume a defect. Save its JSON as
-   `context-questions.json`; use an empty questions array when context is
-   sufficient. Each question must be one direct question with an impact, a
-   realistic scenario, and cited pinned references. If the detector cannot complete,
+   `context-questions.json`; return zero or more distinct questions based on
+   material gaps, with no fixed count limit, and use an empty array when context
+   is sufficient. Ask one direct question per gap, each with an impact, a
+   realistic scenario, and cited pinned references; publish each as its own
+   comment. If the detector cannot complete,
    record the gap and do not claim that missing context was checked.
 
    Also find author answers to earlier context questions in the cycle window
@@ -508,8 +510,11 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    realistic ordered sequence that reproduces the behavior through the changed
    code. `expected_result` states the behavior the contract or user flow
    requires; `actual_result` states the incorrect behavior that occurs after
-   those steps. Support both outcomes with the pinned evidence. Do not use
-   hypothetical steps unsupported by pinned context. Give
+   those steps. Use concrete operations, field names, representative inputs,
+   relevant organization/version/configuration values, and state transitions
+   from pinned context wherever available; avoid generic steps when evidence
+   supports specific ones. Support both outcomes with the pinned evidence. Do
+   not use hypothetical steps unsupported by pinned context. Give
    each evidence reference an `R1`, `R2`, ... ID and place that ID beside the
    statement it supports in `evidence.explanation`; cite each ID exactly once.
    The renderer turns each in-text ID into a direct pinned-source link.

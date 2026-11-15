@@ -116,8 +116,6 @@ def context_question_id(question: str) -> str:
 def validate_context_questions(data: object, manifest: dict, update_count: int = 0) -> list[dict]:
     if not isinstance(data, dict) or not isinstance(data.get("questions"), list):
         raise EvidenceError("Expected context questions array")
-    if len(data["questions"]) > 5:
-        raise EvidenceError("At most five context questions may be asked in one review")
     questions = []
     ids: set[str] = set()
     for item in data["questions"]:

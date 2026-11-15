@@ -180,8 +180,10 @@ retry can detect an answer already posted.
 
 The `missing-context-detector` subagent asks only when missing information
 could change the review conclusion or requested action; it must not assume a
-defect. It posts one question per PR comment with an impact, a realistic
-scenario, a hidden marker, and a Q-ID.
+defect. It can ask zero or more questions in a review: none when context is
+sufficient, or one separate question for each distinct material gap. There is
+no fixed count limit. Each PR comment contains one direct question, its impact,
+a realistic scenario, pinned evidence, a hidden marker, and a Q-ID.
 The PR author answers with `Answer Q-ID: ...`. On the next feedback check, the
 bot checks the answer, verifies the author's organization membership, and
 uses the explanatory-answer skill for “how” or explanation questions. It posts
