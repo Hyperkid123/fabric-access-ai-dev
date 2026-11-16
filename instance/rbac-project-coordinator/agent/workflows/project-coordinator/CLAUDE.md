@@ -131,13 +131,14 @@ creates or changes Jira issue links.
    parent, phase, repo, dependencies, and acceptance criteria. The coordinator
    creates a normal ticket only when a later new user comment explicitly uses
    `/coord create P-<number>`. It does not edit or close implementation tickets.
-9. After any action, post one `### Coordinator update` comment on the control
-   ticket with what changed, current phase, done/active/blocked counts, next
-   runnable tickets, and questions. Supply one to five context-specific
-   suggestions in the `next_steps` request field. The validated comment action
-   appends them under `### Possible next steps`; generate these suggestions for
-   the current project state. If the user has nothing to do, suggest waiting
-   for the next scheduled scan. Use a stable `action_id` so retries do not
+9. After any action, provide update text for the control ticket: what changed,
+   current phase, done/active/blocked counts, next runnable tickets, and
+   questions. Do not include a `Coordinator update` heading; the validated
+   comment action adds it once and removes a repeated leading heading. Supply
+   one to five context-specific suggestions in the `next_steps` request field.
+   The validated comment action appends them under `### Possible next steps`;
+   generate these suggestions for the current project state. If the user has
+   nothing to do, suggest waiting for the next scheduled scan. Use a stable `action_id` so retries do not
    duplicate comments. Do not report a label or ticket creation until the
    action script verifies it.
 10. `task_update` the control task with `snapshot_hash` from preflight,

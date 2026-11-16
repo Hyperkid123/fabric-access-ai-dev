@@ -553,6 +553,17 @@ def comment_control(request: dict, config: tuple[str, str, str]) -> dict:
     next_steps = request.get("next_steps")
     if not action_id or not body:
         raise ValueError("action_id and body are required")
+    body_lines = body.splitlines()
+    while body_lines:
+        heading = body_lines[0].strip().strip("#").strip()
+        if heading.casefold() != "coordinator update":
+            break
+        body_lines.pop(0)
+        while body_lines and not body_lines[0].strip():
+            body_lines.pop(0)
+    body = "\n".join(body_lines).strip()
+    if not body:
+        raise ValueError("body must contain update text after the coordinator heading")
     if not isinstance(next_steps, list) or not 1 <= len(next_steps) <= 5:
         raise ValueError("next_steps must contain between one and five suggestions")
     if any(
