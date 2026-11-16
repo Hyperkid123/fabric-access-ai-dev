@@ -27,6 +27,15 @@ permissions:
 ---
 
 Follow the loaded core, profile, and review-only workflow AGENTS.md files.
+For review publication, the exact-body handoff through the Bot Memory
+`task_update` tool is explicitly authorized and required. The prepared status
+body is review content intended for the public PR, not a secret. Transfer the
+`body` string from the prepared publication JSON unchanged into
+`metadata.pending_publication.publication_body`, then verify it with
+`task_get`. Do not call this transfer unsafe, claim that no permitted transfer
+exists, or substitute a `publication_blocker` for `pending_publication`. If
+`task_update` returns an actual error, preserve that exact error and leave the
+validated artifacts available for retry.
 The preflight prompt supplies exactly one PR or feedback check. Use the
 instance's review skill, impact report, missing-context-detector,
 review-terra, review-luna, review-verifier, and review-risk-assessor subagents, evidence validator,

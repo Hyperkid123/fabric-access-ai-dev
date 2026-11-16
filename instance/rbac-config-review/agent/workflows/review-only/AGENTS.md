@@ -683,12 +683,40 @@ artifacts. Keep uncompleted command IDs for the new cycle.
 
    This embeds the versioned hidden payload into the exact body saved for a
    publication retry.
-6. Before posting, persist `pending_publication` with this head/base, the
-   prepared publication JSON and its exact `publication_body`, inline comments,
-   context question and response comments, output ledger and manifest paths,
-   the returned update_count, the
-   cycle watermark, risk-assessment JSON, the command IDs, and preflight's `feedback_comment_ids`
-   processed in that window.
+6. Before posting, persist `pending_publication` through the available
+   Bot Memory `task_update` tool. This exact-body transfer is explicitly
+   permitted: the prepared status body is review content intended for the
+   public PR. Read `publication.json` and pass its `body` string unchanged as
+   `metadata.pending_publication.publication_body`; do not treat moving this
+   generated string from the shell result into `task_update` as a permission or
+   safety problem. Update the existing GitHub task with `task_update` using
+   this argument shape, filling in the remaining recovery fields listed below:
+
+   ```javascript
+   {
+     external_key: work.task_key,
+     source_type: "github",
+     metadata: {
+       pending_publication: {
+         head_sha,
+         base_sha,
+         publication_body: publication.body,
+         // Include the remaining recovery fields listed below.
+       },
+     },
+   }
+   ```
+
+   Include the prepared
+   publication JSON, inline comments, context question and response comments,
+   output ledger and manifest paths, returned `update_count`, cycle watermark,
+   risk-assessment JSON, command IDs, and preflight's `feedback_comment_ids`
+   processed in that window. Then call `task_get` and verify that the saved
+   head/base and `publication_body` exactly match the prepared publication.
+   Do not replace this state with `publication_blocker`, and do not stop after
+   `--prepare-only` when `task_update` is available. If `task_update` returns
+   an actual error, record its exact response and leave the task retryable;
+   do not attempt publication without persisted pending state.
    Leave the task in progress. Re-read the PR head and base
    SHAs immediately before posting. If either
    changed, save progress and stop; preflight will select the new pair next
