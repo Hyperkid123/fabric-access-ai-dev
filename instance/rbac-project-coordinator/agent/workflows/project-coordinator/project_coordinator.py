@@ -359,8 +359,8 @@ def open_pr_snapshot(children: list[dict], implementation_label: str, project_re
     return snapshot, errors
 
 
-def summarize_child(issue: dict, control_key: str) -> dict:
-    blockers, related = linked_issues(issue)
+def summarize_child(issue: dict) -> dict:
+    blockers, _ = linked_issues(issue)
     issue_labels = labels(issue)
     assignee = value(issue, "assignee")
     sprint = value(issue, "customfield_10020")
@@ -372,7 +372,6 @@ def summarize_child(issue: dict, control_key: str) -> dict:
         "repo_labels": sorted(label for label in issue_labels if label.startswith("repo:")),
         "implementation_labeled": False,  # filled by build_snapshot
         "blockers": sorted(blockers),
-        "relates_to_control": control_key in related,
         "assignee": bool(assignee),
         "sprint": bool(sprint),
         "description": str(value(issue, "description") or "")[:2000],
@@ -381,7 +380,6 @@ def summarize_child(issue: dict, control_key: str) -> dict:
 
 def evaluate(control: dict, children: list[dict], repo_names: set[str], implementation_label: str, include_backlog: bool) -> dict:
     """Mechanical plan checks. The agent still judges requirement quality."""
-    control_key = key_of(control)
     control_labels = labels(control)
     gaps: list[str] = []
     state_labels = [label for label in control_labels if label in COORD_STATES]
@@ -399,7 +397,7 @@ def evaluate(control: dict, children: list[dict], repo_names: set[str], implemen
     if unknown:
         gaps.append(f"Control ticket has unknown repos: {', '.join(sorted(unknown))}")
 
-    tickets = [summarize_child(issue, control_key) for issue in children]
+    tickets = [summarize_child(issue) for issue in children]
     for ticket, issue in zip(tickets, children):
         ticket["implementation_labeled"] = implementation_label in labels(issue)
     by_key = {ticket["key"]: ticket for ticket in tickets}
@@ -418,11 +416,6 @@ def evaluate(control: dict, children: list[dict], repo_names: set[str], implemen
     blockers_by_key = {ticket["key"]: set(ticket["blockers"]) for ticket in tickets}
     if cyclic_dependencies(blockers_by_key):
         gaps.append("Implementation ticket dependency links form a cycle")
-
-    for ticket in tickets:
-        internal_blockers = set(ticket["blockers"]) & set(by_key)
-        if ticket["phase_labels"] and not internal_blockers and not ticket["relates_to_control"]:
-            gaps.append(f"Root ticket {ticket['key']} must relate to the control ticket")
 
     incomplete_phases = sorted(
         phase for phase, phase_tickets in phases.items() if any(ticket["status"].lower() not in COMPLETE_STATUSES for ticket in phase_tickets)

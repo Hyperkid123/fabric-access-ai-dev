@@ -28,11 +28,10 @@ only conversation and status surface. Implementations stay with the existing
 
 Whenever creating or revising a plan, analyze and list every same-Team
 implementation ticket on the control ticket: key, summary, status, current and
-suggested phase, dependencies, parallel group, and repo suggestion. Explain
-the proposed order and any gaps. Phase suggestions remain advisory until the
-user approves the setup proposal. Only create a `blocks` link after a new user comment explicitly
-requests `/coord dependency BLOCKER blocks BLOCKED` and the validated action
-confirms both tickets are in scope and the link will not create a cycle.
+suggested phase, dependencies from existing Jira links, parallel group, and repo
+suggestion. Explain the proposed order and any gaps. Phase suggestions remain
+advisory until the user approves the setup proposal. The coordinator never
+creates or changes Jira issue links.
 
 ## Cycle
 
@@ -49,15 +48,14 @@ confirms both tickets are in scope and the link will not create a cycle.
 3. **First enrollment** (control has `$BOT_LABEL`, no coordinator state):
    analyze every same-Team implementation ticket: summary, description,
    acceptance criteria, status, phase labels, repo scope, and existing links.
-   Propose a complete plan with a suggested phase for each ticket, root links,
-   requested `blocks` dependencies, and parallel groups. Do not invent
-   dependency links.
+   Propose a complete plan with a suggested phase for each ticket, existing
+   dependencies, and parallel groups. Do not create or change links.
    Comment on the control ticket with a list of every same-Team implementation
    ticket (key, summary, status, current and suggested phase, dependencies,
    parallel group, and repo suggestion), plus rationale, gaps, questions, and
    a readable dependency diagram. If the repo choice and setup are clear,
-   include a `coordinator-setup` JSON block containing `repository`, a complete
-   `phase_assignments` mapping, and the exact `root_tickets` list. Ask the user
+   include a `coordinator-setup` JSON block containing `repository` and a complete
+   `phase_assignments` mapping. Ask the user
    to correct any suggestion or reply with `approve` or `approved` to approve
    the complete setup. Approval detection reads Jira rich-text comments,
    including mentions and surrounding formatting. The user approves the
@@ -69,26 +67,19 @@ confirms both tickets are in scope and the link will not create a cycle.
    Use this exact machine-readable block shape in the coordinator comment:
 
    ```coordinator-setup
-   {"repository":"insights-rbac","phase_assignments":{"phase:01":["RHCLOUD-123"]},"root_tickets":["RHCLOUD-123"]}
+   {"repository":"insights-rbac","phase_assignments":{"phase:01":["RHCLOUD-123"]}}
    ```
 4. **New control comments**: a user comment containing the word `approve` or
    `approved` (including `/coord approve setup`) applies the latest proposed
-   repository label to the control ticket, phase labels to all
-   listed implementation tickets, and `relates to` links from the listed roots
-   to the control ticket. Use only the validated `approve-setup` action. It
-   reads the proposal from the preceding coordinator comment and rechecks Team,
-   parent, repo, phase, and root scope. This action never creates `blocks`
-   links. `/coord start` asks the coordinator to recheck the
+   repository label to the control ticket and phase labels to all listed
+   implementation tickets. It does not create or change Jira issue links. Use
+   only the validated `approve-setup` action. It reads the proposal from the
+   preceding coordinator comment and rechecks Team, parent, repo, and phase
+   scope. `/coord start` asks the coordinator to recheck the
    plan gate and release currently runnable tickets. It uses the same validated
    handoff and repo label mapping as an automatic progress cycle. `/coord status`
    gets a fresh status comment.
    `/coord create P-1` may create one previously proposed ticket.
-   `/coord dependency RHCLOUD-123 blocks RHCLOUD-456` requests a Jira
-   dependency link. Use the validated `link-dependency` action; both tickets
-   must be direct children with the control ticket's Team ID, and the link must not
-   create a cycle. After the link is verified, refresh the full ticket plan in
-   the control comment. Ask for clarification if either ticket or direction is
-   ambiguous.
    `/coord complete project` can finish the project only when all same-Team
    implementation tickets are complete. Other comments may clarify the plan,
    answer setup questions, correct the repo or phase proposal, or request
@@ -96,10 +87,9 @@ confirms both tickets are in scope and the link will not create a cycle.
    for a new `approve` or `approved` comment; never apply an older proposal.
    Do not execute historical comments on the first enrollment.
 5. **Plan gate**: the first phase must exist; the path through its tickets,
-   parallel work, and exit criteria must be clear. Tickets with no same-Team
-   predecessor must `relate to` the control ticket. Use directional `blocks`
-   links for dependencies; `relates to` alone does not order work. Resolve
-   cycles and ambiguous repo selection before handoff. The mechanical
+   parallel work, and exit criteria must be clear. Use existing directional
+   `blocks` links as dependency information; phases determine handoff order.
+   Resolve cycles and ambiguous repo selection before handoff. The mechanical
    preflight gaps must be empty, and you must judge that each runnable ticket
    has a clear outcome and acceptance criteria. If not, comment with the
    missing details and keep `dev-bot-coordinator:needs-plan` (or
@@ -113,10 +103,11 @@ confirms both tickets are in scope and the link will not create a cycle.
    incomplete phase, choose the correct `repo:` label from the control
    ticket's allowed repos according to that ticket's scope. If multiple repos
    are plausible, ask on the control ticket. Then call the validated handoff
-   action. It reads `dev-bot-labels` for each chosen repository from
-   `instance/rbac-config-review/agent/review-context.yaml` and applies those
-   labels to the implementation ticket. Do not invent or hardcode handoff
-   labels. Parallel tickets can be handed off in one cycle. The implementation
+   action. It applies `repo:<name>` and the configured
+   `BOT_IMPLEMENTATION_LABEL` to the implementation ticket, validating these
+   against `dev-bot-labels` in `instance/rbac-config-review/agent/review-context.yaml`.
+   Do not invent or hardcode handoff labels. Parallel tickets can be handed off
+   in one cycle. The implementation
    bot requires an unassigned ticket in a not-started status and an active
    sprint, unless backlog intake is enabled. These are hard handoff gates. If
    they fail, report the exact blocker and wait; do not assign the ticket or
@@ -172,7 +163,6 @@ Actions and required request keys:
 | `approve-setup` | `request_comment_id` (new user comment containing `approve` or `approved`) |
 | `handoff` | `ticket_key`, `repos` (list of repo names) |
 | `label-review-prs` | `ticket_key` (implementation ticket with the bot label) |
-| `link-dependency` | `request_comment_id`, `blocking_ticket_key`, `blocked_ticket_key` |
 | `create-ticket` | `request_comment_id`, `proposal_id`, `phase`, `summary`, `description` |
 | `comment` | `action_id`, `body`, `next_steps` (one to five single-line suggestions) |
 
