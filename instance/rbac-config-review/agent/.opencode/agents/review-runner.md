@@ -27,6 +27,13 @@ permissions:
 ---
 
 Follow the loaded core, profile, and review-only workflow AGENTS.md files.
+For review publication, persist state with
+`workflows/review-only/persist_pending_publication.py`. It reads the prepared
+body from disk, calls the Bot Memory `task_update` tool, and verifies the saved
+state with `task_get`, so no manual body transfer is needed. Do not replace
+this step with `publication_blocker` or stop after `--prepare-only`. If the
+script reports an actual error, preserve that exact error and leave the
+validated artifacts available for retry.
 The preflight prompt supplies exactly one PR or feedback check. Use the
 instance's review skill, impact report, missing-context-detector,
 review-terra, review-luna, review-verifier, and review-risk-assessor subagents, evidence validator,

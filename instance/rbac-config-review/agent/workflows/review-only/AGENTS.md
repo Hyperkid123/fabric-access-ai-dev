@@ -268,11 +268,22 @@ organization member on an existing, unpaused review task.
    Prepare the new status body and embed its ledger with
    `post_review.py --repo <owner>/<repo> --pr <number> --head-sha <head_sha>
    --base-sha <base_sha> --publication <publication.json>
-   --ledger <verified-ledger.json> --prepare-only`.
-4. Before publishing, save the exact publication body and JSON, updated ledger,
-   comment links, current SHAs, `operation="verify"`, and verification
-   command IDs in `pending_publication`. Publish the status review in place
-   using its existing `review_id`. Only after GitHub confirms that update,
+   --ledger <verified-ledger.json> --comment-links <comment-links.json>
+   --prepare-only`.
+4. Save the recovery fields in `pending-state.json`, including `repo`, `pr`,
+   current SHAs, `operation="verify"`, `update_count`, publication/ledger/
+   comment-link/manifest paths, and verification command IDs. Persist and
+   verify the exact body without copying it through the model:
+
+   ```
+   python3 workflows/review-only/persist_pending_publication.py \
+     --task-key <work.task_key> --publication <publication.json> \
+     --pending-state <pending-state.json> --comment-links <comment-links.json>
+   ```
+
+   The script reads the prepared body, calls Bot Memory `task_update`, then
+   reads the task back and checks the exact body and SHAs. Publish the status
+   review in place using its existing `review_id`. Only after GitHub confirms that update,
    resolve threads for entries whose ledger status is `addressed`:
 
    ```
@@ -683,13 +694,28 @@ artifacts. Keep uncompleted command IDs for the new cycle.
 
    This embeds the versioned hidden payload into the exact body saved for a
    publication retry.
-6. Before posting, persist `pending_publication` with this head/base, the
-   prepared publication JSON and its exact `publication_body`, inline comments,
-   context question and response comments, output ledger and manifest paths,
-   the returned update_count, the
-   cycle watermark, risk-assessment JSON, the command IDs, and preflight's `feedback_comment_ids`
-   processed in that window.
-   Leave the task in progress. Re-read the PR head and base
+6. Write `pending-state.json` with the recovery metadata other than the body:
+   `repo`, `pr`, head/base SHAs, `operation`, `publication_json_path`,
+   `inline_comments_path`, context-question and context-response comment paths,
+   ledger and manifest paths, `update_count`, cycle watermark,
+   risk-assessment path, command IDs, and preflight's `feedback_comment_ids`.
+   Set `operation` to `review` for a full review and `verify` for verification.
+   Keep empty command/comment ID lists as `[]` and unavailable context-comment
+   paths as `null`.
+   Before posting any inline findings, persist the prepared publication with:
+
+   ```
+   python3 workflows/review-only/persist_pending_publication.py \
+     --task-key <work.task_key> --publication <publication.json> \
+     --pending-state <pending-state.json>
+   ```
+
+   The script reads `publication.json` directly, stores its exact body and JSON
+   through Bot Memory `task_update`, and verifies the saved body and SHAs using
+   `task_get`; do not copy the body through the model. Do not replace this state
+   with `publication_blocker` or stop after `--prepare-only`. If the script
+   returns an actual error, preserve its exact response and leave the task
+   retryable. Leave the task in progress. Re-read the PR head and base
    SHAs immediately before posting. If either
    changed, save progress and stop; preflight will select the new pair next
    cycle.
@@ -704,6 +730,26 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    updates an existing same-head comment with the same ID instead of
    duplicating it. If inline publication fails, leave the task in progress and
    do not publish a summary with missing links.
+
+   Once inline comments return their URLs, prepare the final status body with
+   those links and refresh the pending body through the same helper before
+   posting the summary. Update `comment_links_path` in `pending-state.json` to
+   point to `<comment-links.json>` before running the helper:
+
+   ```
+   python3 workflows/review-only/post_review.py --repo <owner>/<repo> \
+     --pr <number> --head-sha <head_sha> --base-sha <base_sha> \
+     --publication <publication.json> --ledger <ledger.json> \
+     --comment-links <comment-links.json> --prepare-only
+   python3 workflows/review-only/persist_pending_publication.py \
+     --task-key <work.task_key> --publication <publication.json> \
+     --pending-state <pending-state.json> --comment-links <comment-links.json>
+   ```
+
+   The helper allows this refresh only when the revision and embedded ledger
+   are unchanged and the body difference is exactly the finding-link
+   substitution. The following `post_review.py` publish call uses the same
+   prepared body and comment links.
 
    Post validated context questions and answer responses as separate top-level
    PR comments using `context_questions.py publish --repo <owner>/<repo>
