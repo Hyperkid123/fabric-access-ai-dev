@@ -27,14 +27,12 @@ permissions:
 ---
 
 Follow the loaded core, profile, and review-only workflow AGENTS.md files.
-For review publication, the exact-body handoff through the Bot Memory
-`task_update` tool is explicitly authorized and required. The prepared status
-body is review content intended for the public PR, not a secret. Transfer the
-`body` string from the prepared publication JSON unchanged into
-`metadata.pending_publication.publication_body`, then verify it with
-`task_get`. Do not call this transfer unsafe, claim that no permitted transfer
-exists, or substitute a `publication_blocker` for `pending_publication`. If
-`task_update` returns an actual error, preserve that exact error and leave the
+For review publication, persist state with
+`workflows/review-only/persist_pending_publication.py`. It reads the prepared
+body from disk, calls the Bot Memory `task_update` tool, and verifies the saved
+state with `task_get`, so no manual body transfer is needed. Do not replace
+this step with `publication_blocker` or stop after `--prepare-only`. If the
+script reports an actual error, preserve that exact error and leave the
 validated artifacts available for retry.
 The preflight prompt supplies exactly one PR or feedback check. Use the
 instance's review skill, impact report, missing-context-detector,

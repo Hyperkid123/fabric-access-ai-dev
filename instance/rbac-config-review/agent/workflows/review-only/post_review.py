@@ -43,6 +43,28 @@ def api(endpoint: str, method: str = "GET", payload: dict | None = None,
     return data
 
 
+def load_comment_links(path: Path | None) -> dict[str, str]:
+    if path is None:
+        return {}
+    links = json.loads(path.read_text())
+    if not isinstance(links, dict) or any(
+        not isinstance(ident, str) or not re.fullmatch(r"F[1-9]\d*", ident)
+        or not isinstance(url, str) or not url.startswith("https://github.com/")
+        for ident, url in links.items()
+    ):
+        raise ValueError("Finding comment links must map finding IDs to GitHub URLs")
+    return links
+
+
+def resolve_finding_links(body: str, links: dict[str, str]) -> str:
+    def replace_finding_link(match: re.Match[str]) -> str:
+        label, ident = match.group(1), match.group(2)
+        url = links.get(ident)
+        return f"[{label}]({url})" if url else f"{label} (comment unavailable)"
+
+    return re.sub(r"\[([^\]]+)\]\(review-comment:(F[1-9]\d*)\)", replace_finding_link, body)
+
+
 def publish(repo: str, pr: int, head: str, base: str, publication: Path,
             review_id: int | None = None, comment_links: Path | None = None,
             ledger_path: Path | None = None) -> dict:
@@ -60,22 +82,7 @@ def publish(repo: str, pr: int, head: str, base: str, publication: Path,
             or body.count(marker) + body.count(legacy_marker) != 1):
         raise ValueError("Publication is missing its validated revision marker")
     body = body.replace(legacy_marker, marker)
-    links = {}
-    if comment_links:
-        links = json.loads(comment_links.read_text())
-        if not isinstance(links, dict) or any(
-            not isinstance(ident, str) or not re.fullmatch(r"F[1-9]\d*", ident)
-            or not isinstance(url, str) or not url.startswith("https://github.com/")
-            for ident, url in links.items()
-        ):
-            raise ValueError("Finding comment links must map finding IDs to GitHub URLs")
-
-    def replace_finding_link(match: re.Match[str]) -> str:
-        label, ident = match.group(1), match.group(2)
-        url = links.get(ident)
-        return f"[{label}]({url})" if url else f"{label} (comment unavailable)"
-
-    body = re.sub(r"\[([^\]]+)\]\(review-comment:(F[1-9]\d*)\)", replace_finding_link, body)
+    body = resolve_finding_links(body, load_comment_links(comment_links))
     ensure_public_content(body, "Status review")
     if ledger_path:
         ledger = json.loads(ledger_path.read_text())
@@ -151,12 +158,17 @@ def publish(repo: str, pr: int, head: str, base: str, publication: Path,
 
 
 def prepare_publication(repo: str, pr: int, head: str, base: str,
-                        publication: Path, ledger_path: Path) -> dict:
+                        publication: Path, ledger_path: Path,
+                        comment_links: Path | None = None) -> dict:
     """Embed the ledger before pending-publication state is recorded."""
     data = json.loads(publication.read_text())
     body = data.get("body") if isinstance(data, dict) else None
     if not isinstance(body, str):
         raise ValueError("Publication body is missing")
+    # Keep placeholders in the first prepared body: inline comments have not
+    # been posted yet, so their URLs are not available until the later refresh.
+    if comment_links is not None:
+        body = resolve_finding_links(body, load_comment_links(comment_links))
     ledger = json.loads(ledger_path.read_text())
     review_numbers = re.findall(r"(?m)^## Review ([1-9]\d*)$", body)
     if len(review_numbers) != 1:
@@ -188,7 +200,8 @@ def main() -> None:
             if not args.ledger:
                 parser.error("--prepare-only requires --ledger")
             print(json.dumps(prepare_publication(
-                args.repo, args.pr, args.head_sha, args.base_sha, args.publication, args.ledger
+                args.repo, args.pr, args.head_sha, args.base_sha, args.publication, args.ledger,
+                args.comment_links,
             )))
             return
         print(json.dumps(publish(args.repo, args.pr, args.head_sha, args.base_sha,

@@ -72,6 +72,7 @@ feedback cycle so bot-authored updates alone do not start a model session.
 | Evidence gate | `review_evidence.py` | Script | Rejects findings without real pinned locations/references; caps at seven; requires one verdict per finding; renders the status template |
 | Risk label publisher | `review_risk_label.py` | Script | Rechecks PR SHAs, applies exactly one risk label, and removes conflicting risk labels |
 | Review ledger transport | `review_ledger.py`, `review_queue.py`, `post_review.py` | Script | Embeds a public-safe ledger in the status review and restores it from GitHub before a model session |
+| Pending publication persistence | `persist_pending_publication.py` | Script | Reads the prepared body from disk, stores it through Bot Memory MCP, and verifies the exact body and revision in task state |
 | Inline publisher | `post_inline_comments.py` | Script | Posts or updates one anchored comment per confirmed finding on the current PR head, deduplicated by finding ID |
 | Finding thread resolver | `resolve_review_threads.py` | Script | Resolves only bot-authored finding threads whose addressed state was confirmed by the verifier and published in the status ledger |
 
