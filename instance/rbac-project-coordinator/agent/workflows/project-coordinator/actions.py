@@ -29,7 +29,6 @@ from project_coordinator import (  # noqa: E402
     START_STATUSES,
     comments,
     comment_body,
-    cyclic_dependencies,
     evaluate,
     get_issue,
     is_own_comment,
@@ -39,7 +38,6 @@ from project_coordinator import (  # noqa: E402
     parent_key,
     search_all,
     is_complete,
-    linked_issues,
     team_id,
     value,
 )
@@ -47,10 +45,6 @@ from project_coordinator import (  # noqa: E402
 STATES = COORD_STATES
 ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 LABEL_RE = re.compile(r"^[A-Za-z0-9:_-]+$")
-DEPENDENCY_REQUEST_RE = re.compile(
-    r"^\s*/coord\s+dependency\s+([A-Z][A-Z0-9]+-\d+)\s+blocks\s+([A-Z][A-Z0-9]+-\d+)\s*$",
-    re.IGNORECASE,
-)
 SETUP_PROPOSAL_RE = re.compile(r"```(?:[A-Za-z0-9_-]+)?\s*(.*?)\s*```", re.DOTALL)
 SETUP_APPROVAL_RE = re.compile(r"\b(?:approve|approved)\b", re.IGNORECASE)
 
@@ -332,69 +326,6 @@ def label_review_prs(request: dict, config: tuple[str, str, str]) -> dict:
     }
 
 
-def link_dependency(request: dict, config: tuple[str, str, str]) -> dict:
-    control = checked_control(request["control_key"], config)
-    _, team_field_id, _ = config
-    comment_id = str(request.get("request_comment_id") or "")
-    if not comment_id:
-        raise ValueError("request_comment_id is required")
-    command = request_comment(control, comment_id, DEPENDENCY_REQUEST_RE.pattern)
-    match = DEPENDENCY_REQUEST_RE.fullmatch(comment_body(command))
-    if not match:
-        raise ValueError("Dependency request must be '/coord dependency KEY blocks KEY'")
-
-    blocker_key, blocked_key = (key.upper() for key in match.groups())
-    requested_blocker = str(request.get("blocking_ticket_key") or "").upper()
-    requested_blocked = str(request.get("blocked_ticket_key") or "").upper()
-    if (requested_blocker, requested_blocked) != (blocker_key, blocked_key):
-        raise ValueError("Dependency action does not match the user's comment")
-    if blocker_key == blocked_key:
-        raise ValueError("A ticket cannot block itself")
-
-    blocker = checked_child(control, blocker_key, team_field_id)
-    blocked = checked_child(control, blocked_key, team_field_id)
-    control_label = config[0]
-    if control_label in labels(blocker) or control_label in labels(blocked):
-        raise ValueError("Dependency endpoints must be implementation tickets")
-
-    children, _ = fresh_assessment(control, config)
-    children_by_key = {key_of(child): child for child in children}
-    if blocker_key not in children_by_key or blocked_key not in children_by_key:
-        raise ValueError("Dependency endpoints must be same-Team project tickets")
-    blockers_by_key = {
-        key: linked_issues(child)[0]
-        for key, child in children_by_key.items()
-    }
-    if blocker_key in blockers_by_key[blocked_key]:
-        return {
-            "blocking_ticket_key": blocker_key,
-            "blocked_ticket_key": blocked_key,
-            "created": False,
-        }
-
-    blockers_by_key[blocked_key].add(blocker_key)
-    if cyclic_dependencies(blockers_by_key):
-        raise ValueError("Dependency would create a cycle")
-
-    # For Jira's Blocks type, the blocked issue is inward and its blocker is outward.
-    call_write(
-        "jira_create_issue_link",
-        {
-            "link_type": "Blocks",
-            "inward_issue_key": blocked_key,
-            "outward_issue_key": blocker_key,
-        },
-    )
-    verified_blockers, _ = linked_issues(get_issue(blocked_key))
-    if blocker_key not in verified_blockers:
-        raise RuntimeError(f"Jira did not confirm {blocker_key} blocks {blocked_key}")
-    return {
-        "blocking_ticket_key": blocker_key,
-        "blocked_ticket_key": blocked_key,
-        "created": True,
-    }
-
-
 def request_comment(control: dict, comment_id: str, command_pattern: str) -> dict:
     matches = [item for item in comments(control) if str(item.get("id") or "") == comment_id]
     if len(matches) != 1:
@@ -453,7 +384,7 @@ def setup_proposal(control: dict, approval_comment_id: str) -> dict:
 
 
 def approve_setup(request: dict, config: tuple[str, str, str]) -> dict:
-    """Apply the latest proposed repo, phase, and root-link setup after approval."""
+    """Apply the latest proposed repo allowlist and phases after approval."""
     control = checked_control(request["control_key"], config)
     _, team_field_id, implementation_label = config
     comment_id = str(request.get("request_comment_id") or "")
@@ -468,9 +399,8 @@ def approve_setup(request: dict, config: tuple[str, str, str]) -> dict:
     repository_handoff_labels([repo_name], implementation_label)
 
     assignments = proposal.get("phase_assignments")
-    roots = proposal.get("root_tickets")
-    if not isinstance(assignments, dict) or not isinstance(roots, list):
-        raise ValueError("Setup proposal must include phase_assignments and root_tickets")
+    if not isinstance(assignments, dict):
+        raise ValueError("Setup proposal must include phase_assignments")
     phase_by_ticket: dict[str, str] = {}
     for phase, ticket_keys in assignments.items():
         if not isinstance(phase, str) or not PHASE_RE.fullmatch(phase) or not isinstance(ticket_keys, list):
@@ -483,12 +413,6 @@ def approve_setup(request: dict, config: tuple[str, str, str]) -> dict:
             phase_by_ticket[ticket_key] = phase
     if not phase_by_ticket or "phase:01" not in assignments:
         raise ValueError("Setup proposal must assign at least one phase:01 ticket")
-    if any(not isinstance(ticket_key, str) or not ISSUE_KEY_RE.fullmatch(ticket_key) for ticket_key in roots):
-        raise ValueError("Setup proposal has an invalid root ticket key")
-    root_keys = set(roots)
-    if len(root_keys) != len(roots):
-        raise ValueError("Setup proposal has duplicate root ticket keys")
-
     parent = parent_key(control)
     siblings = search_all(f'parent = "{parent}" ORDER BY key ASC')
     control_team = team_id(control, team_field_id)
@@ -509,17 +433,6 @@ def approve_setup(request: dict, config: tuple[str, str, str]) -> dict:
             + (f"; out of scope {', '.join(sorted(unknown))}" if unknown else "")
         )
     children_by_key = {key_of(item): item for item in children}
-    blockers_by_key = {
-        key: linked_issues(item)[0]
-        for key, item in children_by_key.items()
-    }
-    expected_roots = {
-        key for key, blockers in blockers_by_key.items()
-        if not blockers.intersection(child_keys)
-    }
-    if root_keys != expected_roots:
-        raise ValueError("Setup proposal roots do not match the current same-Team dependency graph")
-
     # Re-read every ticket and validate before performing any Jira writes.
     fresh_children = {key: checked_child(control, key, team_field_id) for key in sorted(child_keys)}
     current_control_labels = labels(control)
@@ -542,10 +455,6 @@ def approve_setup(request: dict, config: tuple[str, str, str]) -> dict:
         updated = [label for label in existing if not PHASE_RE.fullmatch(label)] + [phase]
         phase_updates[ticket_key] = updated
 
-    missing_root_links = [
-        key for key in sorted(root_keys)
-        if key_of(control) not in linked_issues(fresh_children[key])[1]
-    ]
     control_repo_label = f"repo:{repo_name}"
     if control_repo_label not in current_control_labels:
         set_labels(key_of(control), current_control_labels + [control_repo_label])
@@ -554,25 +463,11 @@ def approve_setup(request: dict, config: tuple[str, str, str]) -> dict:
         if set(updated) != set(labels(fresh_children[ticket_key])):
             set_labels(ticket_key, updated)
             updated_phases.append(ticket_key)
-    linked_roots: list[str] = []
-    for ticket_key in missing_root_links:
-        call_write(
-            "jira_create_issue_link",
-            {
-                "link_type": "Relates",
-                "inward_issue_key": ticket_key,
-                "outward_issue_key": key_of(control),
-            },
-        )
-        if key_of(control) not in linked_issues(get_issue(ticket_key))[1]:
-            raise RuntimeError(f"Jira did not confirm relates-to link for {ticket_key}")
-        linked_roots.append(ticket_key)
     return {
         "control_key": key_of(control),
         "repository": repo_name,
         "control_repo_label_added": control_repo_label not in current_control_labels,
         "phase_labels_updated": updated_phases,
-        "root_links_added": linked_roots,
         "approval_comment_id": comment_id,
     }
 
@@ -658,6 +553,17 @@ def comment_control(request: dict, config: tuple[str, str, str]) -> dict:
     next_steps = request.get("next_steps")
     if not action_id or not body:
         raise ValueError("action_id and body are required")
+    body_lines = body.splitlines()
+    while body_lines:
+        heading = body_lines[0].strip().strip("#").strip()
+        if heading.casefold() != "coordinator update":
+            break
+        body_lines.pop(0)
+        while body_lines and not body_lines[0].strip():
+            body_lines.pop(0)
+    body = "\n".join(body_lines).strip()
+    if not body:
+        raise ValueError("body must contain update text after the coordinator heading")
     if not isinstance(next_steps, list) or not 1 <= len(next_steps) <= 5:
         raise ValueError("next_steps must contain between one and five suggestions")
     if any(
@@ -691,8 +597,6 @@ def dispatch(request: dict) -> dict:
         return handoff(request, config)
     if action == "label-review-prs":
         return label_review_prs(request, config)
-    if action == "link-dependency":
-        return link_dependency(request, config)
     if action == "create-ticket":
         return create_ticket(request, config)
     if action == "comment":

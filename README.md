@@ -111,16 +111,11 @@ coordinator run:
    and acceptance criteria. Every same-Team direct child other than the
    control ticket is treated as project work, so keep unrelated tickets out
    of this parent or include them in the plan.
-4. **Approve the setup proposal.** The coordinator suggests a repository, one
-   phase for each implementation ticket, and root tickets that need `relates
-   to` links. Correct the suggestion if needed, then reply `Approved`. The
-   coordinator applies the repo label, all phase labels, and root links. You do
-   not need to edit labels or links. To ask the coordinator to add an ordering
-   link, comment
-   `/coord dependency RHCLOUD-123 blocks RHCLOUD-456` on the control ticket.
-   The coordinator checks that both tickets are same-Team children and that
-   the link will not create a cycle. It creates directional dependencies only
-   when explicitly requested this way.
+4. **Approve the setup proposal.** The coordinator suggests a repository and
+   one phase for each implementation ticket. Correct the suggestion if needed,
+   then reply `Approved`. The coordinator applies the repo allowlist to the
+   control ticket and phase labels to implementation tickets. It does not
+   create or change Jira issue links.
 5. **Make first handoffs possible.** Tickets ready for handoff must be
    unassigned and in `New`, `Backlog`, `Refinement`, or `To Do`. They need an
    active sprint unless `BOT_INCLUDE_BACKLOG` is enabled. The coordinator
@@ -131,13 +126,14 @@ On first enrollment, the coordinator analyzes all same-Team implementation
 tickets and posts a proposed order, phase suggestions, dependencies, parallel
 groups, repo choices, gaps, and questions on the control ticket. It normally
 sets `dev-bot-coordinator:needs-plan` and waits for your approval. Replying
-`Approved` lets it apply the proposed repo label, all phase labels, and root
-`relates to` links. It does not create suggested `blocks` links without an
-explicit dependency request.
+`Approved` lets it apply the proposed repo allowlist to the control ticket and
+phase labels to implementation tickets. Existing Jira dependency links inform
+planning, but the coordinator does not create or change issue links.
 After a scheduled run sees the plan gate pass, it sets
 `dev-bot-coordinator:active` and releases the unblocked tickets in the earliest
-incomplete phase to the implementation bot. It takes the handoff labels from
-`instance/rbac-config-review/agent/review-context.yaml` for each selected repo.
+incomplete phase to the implementation bot. It adds `repo:<name>` and the
+configured `BOT_IMPLEMENTATION_LABEL` to each implementation ticket at handoff,
+using `dev-bot-labels` from `instance/rbac-config-review/agent/review-context.yaml`.
 When an implementation ticket has an open PR titled with its Jira key in
 brackets, the coordinator adds the same YAML's `review_label` (currently
 `dev-bot-review`) so the review bot can pick it up. It reports each handoff and
@@ -171,10 +167,10 @@ flowchart TD
     S["Scheduled scan<br/>Jira + saved snapshot"] --> C{"First run, project changed,<br/>or state missing?"}
     C -->|No| W["Wait for next scan"]
     C -->|Yes| R["Read one project<br/>parent, control, same-Team tickets"]
-    R --> P["Propose repo, phases,<br/>and root links"]
+    R --> P["Propose repo and phases"]
     P --> A{"User approves setup?"}
     A -->|No| Q["Answer questions or revise proposal<br/>on the control ticket"]
-    A -->|Yes| X["Apply repo label, phase labels,<br/>and root relates links"]
+    A -->|Yes| X["Apply repo allowlist and<br/>phase labels"]
     X --> G{"Plan and intake ready?"}
     G -->|No| B["Report blockers<br/>and wait"]
     G -->|Yes| H["Hand off ready tickets<br/>to implementation bot"]
@@ -189,17 +185,16 @@ flowchart TD
 |---|---|---|
 | 1. Scan | Project, control label, Team field key, repo allowlist, backlog setting, and saved memory snapshot. | Finds control tickets and their parent issues. Reads each control ticket's Team ID and includes only direct children with that same ID. |
 | 2. Detect change | Parent and control details; same-Team child status, labels, links, ownership, sprint, and human control comments. | Skips unchanged projects. Starts a cycle for a first run, changed project, or missing state label. |
-| 3. Review | Changed project payload: ticket keys, phases, statuses, dependencies, gaps, ready/waiting tickets, allowed repos, and new comments. | Coordinator rereads relevant Jira tickets, answers setup questions, and proposes a repo, phases, and root links. |
-| 4. Approve setup | The latest proposal and the user's approval comment. | One approval lets the validated action add the control repo label, implementation phase labels, and root `relates to` links. It does not create `blocks` dependencies. |
+| 3. Review | Changed project payload: ticket keys, phases, statuses, dependencies, gaps, ready/waiting tickets, allowed repos, and new comments. | Coordinator rereads relevant Jira tickets, answers setup questions, and proposes a repo and phases. |
+| 4. Approve setup | The latest proposal and the user's approval comment. | One approval lets the validated action add the control repo allowlist and implementation phase labels. It does not create or change Jira issue links. |
 | 5. Check readiness | Approved setup, acceptance criteria, ticket assignees/statuses, active sprint or backlog setting. | Waits and reports any gaps. It hands off only unassigned, not-started tickets that also meet the sprint/backlog requirement. |
-| 6. Act and save | Explicit dependency request or ready ticket; latest Jira state. | Validated actions apply requested dependencies or hand off ready work. Saves the snapshot and handled comment IDs for the next scan. |
+| 6. Act and save | Ready ticket and latest Jira state. | Validated actions add the selected repo and implementation labels to ready tickets, then hand off the work. Saves the snapshot and handled comment IDs for the next scan. |
 
 On the control ticket, users can request:
 
 ```text
 /coord status
 /coord approve setup
-/coord dependency RHCLOUD-123 blocks RHCLOUD-456
 /coord create P-1
 /coord complete project
 ```
@@ -208,12 +203,11 @@ On the control ticket, users can request:
 `/coord complete project` requires all in-scope tickets to be complete.
 During planning, the control comment lists every in-scope ticket with its
 current status and phase, plus suggested phases, dependencies, parallel
-groups, and repo routing. Dependency changes are applied only when the user
-requests the exact `blocks` direction in Jira; suggested phases remain
-suggestions. Replying `Approved` also works for the current setup proposal. Jira
-remains the source of truth; the coordinator rereads relevant issues before
-acting. The shared Jira MCP service must expose `jira_create_issue_link` for
-setup links and requested dependencies.
+groups, and repo routing. Existing Jira dependency links inform planning, but
+the coordinator never creates or changes issue links. Suggested phases remain
+suggestions until approved. Replying `Approved` also works for the current setup
+proposal. Jira remains the source of truth; the coordinator rereads relevant
+issues before acting.
 
 Every coordinator comment ends with a **Possible next steps** footer. Its
 suggestions are generated from the current ticket statuses, plan gaps, approval
