@@ -191,15 +191,69 @@ def test_same_second_request_is_discovered_once_even_without_an_updated_timestam
                "updated_at": PR["updatedAt"],
                "user": {"login": "alice", "type": "User"}}
     monkeypatch.setattr(queue, "list_prs", lambda *_args: [PR])
-    monkeypatch.setattr(queue, "fetch_comments", lambda *_args: [comment])
-    monkeypatch.setattr(queue, "external_feedback_ids",
-                        lambda _repo, _number, _since, _through, seen: [] if "issue:101" in seen else ["issue:101"])
+    monkeypatch.setattr(queue, "_fetch_pr_feedback",
+                        lambda *_args: {"issue": [comment], "review-comment": [], "review": []})
+    monkeypatch.setattr(queue, "_bot_login", lambda: "review-bot")
+    monkeypatch.setattr(queue, "_is_org_member", lambda *_args: True)
+    monkeypatch.setattr(queue, "_latest_review_label_event", lambda *_args: None)
     chosen, errors = queue.pick_work(REPOS, {"review_label": "dev-bot-review"}, [task])
     assert not errors
-    assert chosen["kind"] == "feedback_check"
+    assert chosen["kind"] == "review"
     task["metadata"]["seen_rereview_comment_ids"] = [101]
     task["metadata"]["seen_feedback_comment_ids"] = ["issue:101"]
-    assert queue.pick_work(REPOS, {"review_label": "dev-bot-review"}, [task]) == (None, [])
+    chosen, errors = queue.pick_work(REPOS, {"review_label": "dev-bot-review"}, [task])
+    assert not errors
+    # The command is deduplicated; the legacy task still needs lifecycle repair.
+    assert chosen["kind"] == "reconcile_open"
+
+
+def test_feedback_scan_fetches_each_comment_surface_once_and_since_filters_comments(monkeypatch):
+    task = {
+        "external_key": "review-only:github:project-kessel/insights-rbac#42",
+        "status": "pr_open",
+        "metadata": {
+            "last_reviewed_sha": PR["headRefOid"],
+            "last_reviewed_base_sha": PR["baseRefOid"],
+            "last_seen_updated_at": "2026-11-05T10:00:00Z",
+            "review_id": 7,
+            "update_count": 1,
+        },
+    }
+    pr = {**PR, "updatedAt": "2026-11-05T11:00:00Z"}
+    feedback_comment = {
+        "id": 104,
+        "body": "The endpoint also needs pagination.",
+        "created_at": "2026-11-05T10:30:00Z",
+        "updated_at": "2026-11-05T10:30:00Z",
+        "user": {"login": "alice", "type": "User"},
+    }
+    issue_calls = []
+    api_calls = []
+
+    def fetch_issue_comments(repo, number, since):
+        issue_calls.append((repo, number, since))
+        return [feedback_comment]
+
+    def fetch_api_items(endpoint, since=None):
+        api_calls.append((endpoint, since))
+        return []
+
+    monkeypatch.setattr(queue, "list_prs", lambda *_args: [pr])
+    monkeypatch.setattr(queue, "_latest_review_label_event", lambda *_args: None)
+    monkeypatch.setattr(queue, "fetch_comments", fetch_issue_comments)
+    monkeypatch.setattr(queue, "_api_items", fetch_api_items)
+    monkeypatch.setattr(queue, "_bot_login", lambda: "review-bot")
+
+    chosen, errors = queue.pick_work(REPOS, {"review_label": "dev-bot-review"}, [task])
+
+    assert not errors
+    assert chosen["kind"] == "feedback_check"
+    assert chosen["feedback_comment_ids"] == ["issue:104"]
+    assert issue_calls == [("project-kessel/insights-rbac", 42, "2026-11-05T10:00:00Z")]
+    assert set(api_calls) == {
+        ("repos/project-kessel/insights-rbac/pulls/42/comments?per_page=100", "2026-11-05T10:00:00Z"),
+        ("repos/project-kessel/insights-rbac/pulls/42/reviews?per_page=100", None),
+    }
 
 
 def test_boundary_scan_failure_is_reported(monkeypatch):
@@ -210,7 +264,8 @@ def test_boundary_scan_failure_is_reported(monkeypatch):
                      "last_seen_updated_at": PR["updatedAt"]},
     }
     monkeypatch.setattr(queue, "list_prs", lambda *_args: [PR])
-    monkeypatch.setattr(queue, "fetch_comments", lambda *_args: (_ for _ in ()).throw(RuntimeError("network error")))
+    monkeypatch.setattr(queue, "_fetch_pr_feedback",
+                        lambda *_args: (_ for _ in ()).throw(RuntimeError("network error")))
     chosen, errors = queue.pick_work(REPOS, {"review_label": "dev-bot-review"}, [task])
     assert chosen is None
     assert errors == ["project-kessel/insights-rbac#42: network error"]
