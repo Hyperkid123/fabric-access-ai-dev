@@ -244,6 +244,9 @@ def prepare(manifest: dict, config: dict, output_dir: Path, focus: list[str] | N
     output_dir.mkdir(parents=True, exist_ok=True)
     plan = {"mode": "dimensions", "level": chosen_level,
             "default_model_preference": default_preference, "passes": passes,
+            "merge": {key: catalog_config[key] for key in (
+                "dedup_jaccard", "dedup_line_range", "consensus_threshold",
+            )},
             "plan_path": str(output_dir / "review-plan.json")}
     Path(plan["plan_path"]).write_text(json.dumps(plan, indent=2))
     return plan

@@ -15,7 +15,7 @@ from urllib.parse import quote
 
 from impact_analysis import make_impact_report
 from review_config import github_markdown_url, github_repo_url, load_config
-from review_comment_footer import status_url
+from review_comment_footer import LEARNING_REQUEST, status_url
 from review_ledger import LedgerPayloadMissing, decode_body, risk_assessment_from_body
 from review_skills import prepare as prepare_review
 
@@ -192,7 +192,10 @@ def fetch_doc(url: str) -> tuple[str, str]:
 
 def build(repo_key: str, pr_number: int, expected_head: str, expected_base: str, output_root: Path,
           focus: list[str] | None = None, level: str | None = None,
-          verification_only: bool = False, status_review_id: int | None = None) -> dict:
+          verification_only: bool = False, status_review_id: int | None = None,
+          learning_only: bool = False) -> dict:
+    if learning_only and (verification_only or focus is not None or level is not None):
+        raise ContextError("Learning context only selects the learning-extraction dimension")
     config = load_config()
     project_repos = json.loads((Path.cwd() / "project-repos.json").read_text())
     entry = project_repos.get(repo_key)
@@ -273,12 +276,16 @@ def build(repo_key: str, pr_number: int, expected_head: str, expected_base: str,
     manifest["impact_path"] = str(impact_path)
     if verification_only:
         manifest["review_plan"] = {"passes": []}
+        manifest_path = snapshot / "manifest.json"
     else:
         run_root = snapshot / "review-runs"
         run_root.mkdir(exist_ok=True)
         run_path = Path(tempfile.mkdtemp(prefix="run-", dir=run_root))
-        manifest["review_plan"] = prepare_review(manifest, config, run_path, focus=focus, level=level)
-    manifest_path = snapshot / "manifest.json"
+        if learning_only:
+            manifest["review_plan"] = prepare_review(manifest, {}, run_path, focus=[LEARNING_REQUEST])
+        else:
+            manifest["review_plan"] = prepare_review(manifest, config, run_path, focus=focus, level=level)
+        manifest_path = run_path / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2))
     return {"manifest_path": str(manifest_path), **manifest}
 
@@ -294,16 +301,18 @@ def main() -> None:
     parser.add_argument("--level", help="Configured dimension level")
     parser.add_argument("--status-review-id", type=int,
                         help="Include the tracked status review and its finding threads")
-    parser.add_argument("--context-only", "--verification-only", dest="context_only",
-                        action="store_true",
-                        help="Build pinned PR context without selecting or generating review dimensions")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--context-only", "--verification-only", dest="context_only", action="store_true",
+                      help="Build pinned PR context without selecting or generating review dimensions")
+    mode.add_argument("--learning-only", action="store_true",
+                      help="Build pinned PR context and select only learning-extraction for a command reply")
     args = parser.parse_args()
     try:
         focus = args.focus.split(",") if args.focus else None
         print(json.dumps(build(args.repo_key, args.pr, args.head_sha, args.base_sha, args.output_root,
                                focus=focus, level=args.level,
                                verification_only=args.context_only,
-                               status_review_id=args.status_review_id), indent=2))
+                               status_review_id=args.status_review_id, learning_only=args.learning_only), indent=2))
     except (ContextError, OSError, ValueError, subprocess.TimeoutExpired) as exc:
         parser.exit(1, f"Context build failed: {exc}\n")
 

@@ -9,6 +9,7 @@ WORKFLOW_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(WORKFLOW_DIR))
 
 import post_review  # noqa: E402
+import review_bot_commands as commands  # noqa: E402
 import review_comment_footer as footer  # noqa: E402
 
 
@@ -25,8 +26,20 @@ def test_footer_preserves_question_and_approval_next_steps():
     linked = footer.with_footer(question_body, REPO, PR, URL)
     assert linked.count(footer.START) == 1
     assert URL in linked
+    assert linked.count("`/review-bot learning-extraction`") == 1
     assert footer.with_footer(linked, REPO, PR, URL) == linked
     assert "Review bot: yes RA-123456789abc" in footer.with_footer(approval, REPO, PR)
+
+
+def test_learning_command_matches_the_advertised_request():
+    timestamp = "2026-11-23T13:04:07Z"
+    comment = {"id": 10, "user": {"type": "User", "login": "author"},
+               "created_at": timestamp, "updated_at": timestamp}
+    requests = commands.requests([
+        {**comment, "body": " /REVIEW-BOT LEARNING-EXTRACTION "},
+        {**comment, "id": 11, "body": "/review-bot learning-extraction details"},
+    ], "issue", REPO, PR, timestamp, timestamp, set(), "review-bot")
+    assert [request.get("action") for request in requests] == ["learning-extraction", None]
 
 
 def test_footer_refuses_status_review():

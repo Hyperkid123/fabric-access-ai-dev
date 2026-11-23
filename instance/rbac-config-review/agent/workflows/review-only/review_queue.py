@@ -8,7 +8,8 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
@@ -143,6 +144,7 @@ def _ledger_recovery_id(chosen: dict, meta: dict) -> str:
 
 
 _ORG_MEMBER_CACHE: dict[tuple[str, str], bool] = {}
+_BOT_LOGIN_CACHE: str | None = None
 
 
 def _is_org_member(org: str, login: str) -> bool:
@@ -357,19 +359,29 @@ def restore_prior_ledger(chosen: dict, task: dict | None) -> bool:
 
 
 def _bot_login() -> str:
+    global _BOT_LOGIN_CACHE
     configured = os.environ.get("GH_USER_NAME", "").strip()
     if configured:
         return configured
+    if _BOT_LOGIN_CACHE is not None:
+        return _BOT_LOGIN_CACHE
     result = subprocess.run(
         ["gh", "api", "user", "--jq", ".login"],
         capture_output=True, text=True, timeout=15, check=False,
     )
     if result.returncode or not result.stdout.strip():
         raise RuntimeError("Cannot identify the GitHub bot account")
-    return result.stdout.strip()
+    _BOT_LOGIN_CACHE = result.stdout.strip()
+    return _BOT_LOGIN_CACHE
 
 
-def _api_items(endpoint: str) -> list[dict]:
+def _api_items(endpoint: str, since: str | None = None) -> list[dict]:
+    if since is not None:
+        watermark = _parse_timestamp(since)
+        if watermark is None:
+            raise ValueError("Comment watermark must include a timezone")
+        separator = "&" if "?" in endpoint else "?"
+        endpoint += separator + urlencode({"since": (watermark - timedelta(seconds=1)).isoformat()})
     result = subprocess.run(
         ["gh", "api", endpoint, "--paginate", "--slurp"],
         capture_output=True, text=True, timeout=60, check=False,
@@ -380,6 +392,23 @@ def _api_items(endpoint: str) -> list[dict]:
     if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
         raise ValueError("GitHub returned invalid PR feedback pages")
     return [item for page in pages for item in page if isinstance(item, dict)]
+
+
+def _fetch_pr_feedback(repo: str, number: int, since: str) -> dict[str, list[dict]]:
+    """Fetch each feedback surface once, in parallel, for one PR scan."""
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        issue_comments = executor.submit(fetch_comments, repo, number, since)
+        review_comments = executor.submit(
+            _api_items, f"repos/{repo}/pulls/{number}/comments?per_page=100", since,
+        )
+        reviews = executor.submit(
+            _api_items, f"repos/{repo}/pulls/{number}/reviews?per_page=100",
+        )
+        return {
+            "issue": issue_comments.result(),
+            "review-comment": review_comments.result(),
+            "review": reviews.result(),
+        }
 
 
 def _latest_review_label_event(repo: str, number: int, label: str) -> dict | None:
@@ -626,15 +655,13 @@ def _external_feedback_key(item: dict, since: str, through: str,
 
 
 def external_feedback_ids(repo: str, number: int, since: str, through: str,
-                          seen_ids: set[str]) -> list[str]:
+                          seen_ids: set[str],
+                          feedback: dict[str, list[dict]] | None = None) -> list[str]:
     """Return same-window human feedback IDs, excluding bot-only PR updates."""
     found: list[str] = []
     bot_login = _bot_login()
-    sources = [
-        ("issue", fetch_comments(repo, number, since)),
-        ("review-comment", _api_items(f"repos/{repo}/pulls/{number}/comments?per_page=100")),
-        ("review", _api_items(f"repos/{repo}/pulls/{number}/reviews?per_page=100")),
-    ]
+    feedback = feedback if feedback is not None else _fetch_pr_feedback(repo, number, since)
+    sources = [(name, feedback[name]) for name in ("issue", "review-comment", "review")]
     for prefix, items in sources:
         for item in items:
             key = _external_feedback_key(item, since, through, prefix, seen_ids, bot_login)
@@ -643,21 +670,23 @@ def external_feedback_ids(repo: str, number: int, since: str, through: str,
     return found
 
 
-def _eligible_bot_commands(chosen: dict, since: str, seen_ids: set[str]) -> list[dict]:
+def _eligible_bot_commands(chosen: dict, since: str, seen_ids: set[str],
+                           feedback: dict[str, list[dict]] | None = None) -> list[dict]:
     """Return contextual commands from organization members on either PR comment surface."""
     repo, number = chosen["repo"], chosen["number"]
     through = datetime.now(timezone.utc).isoformat()
     bot_login = _bot_login()
+    feedback = feedback if feedback is not None else _fetch_pr_feedback(repo, number, since)
     found = bot_command_requests(
-        fetch_comments(repo, number), "issue", repo, number,
+        feedback["issue"], "issue", repo, number,
         since, through, seen_ids, bot_login,
     )
     found.extend(bot_command_requests(
-        _api_items(f"repos/{repo}/pulls/{number}/comments?per_page=100"),
+        feedback["review-comment"],
         "review-comment", repo, number, since, through, seen_ids, bot_login,
     ))
     found.extend(bot_command_requests(
-        _api_items(f"repos/{repo}/pulls/{number}/reviews?per_page=100"),
+        feedback["review"],
         "review", repo, number, since, through, seen_ids, bot_login,
     ))
     org = repo.split("/", 1)[0]
@@ -671,14 +700,15 @@ def _eligible_bot_commands(chosen: dict, since: str, seen_ids: set[str]) -> list
     return eligible
 
 
-def _eligible_rereview_ids(chosen: dict, task: dict | None, since: str) -> list[int]:
+def _eligible_rereview_ids(chosen: dict, task: dict | None, since: str,
+                           comments: list[dict] | None = None) -> list[int]:
     if task is None:
         return []
     meta = _metadata(task)
     seen = meta.get("seen_rereview_comment_ids") or []
     if not isinstance(seen, list) or any(type(ident) is not int or ident <= 0 for ident in seen):
         raise ValueError("Invalid seen_rereview_comment_ids")
-    comments = fetch_comments(chosen["repo"], chosen["number"], since)
+    comments = comments if comments is not None else fetch_comments(chosen["repo"], chosen["number"], since)
     candidates = rereview_requests(
         comments, since, chosen["updated_at"], set(seen)
     )
@@ -690,7 +720,8 @@ def _eligible_rereview_ids(chosen: dict, task: dict | None, since: str) -> list[
     return eligible
 
 
-def _eligible_verify_ids(chosen: dict, task: dict | None, since: str) -> list[int]:
+def _eligible_verify_ids(chosen: dict, task: dict | None, since: str,
+                         comments: list[dict] | None = None) -> list[int]:
     """Find exact verification commands from organization members on reviewed PRs."""
     if task is None or task.get("status") != "pr_open":
         return []
@@ -702,7 +733,7 @@ def _eligible_verify_ids(chosen: dict, task: dict | None, since: str) -> list[in
     seen = meta.get("seen_verify_comment_ids") or []
     if not isinstance(seen, list) or any(type(ident) is not int or ident <= 0 for ident in seen):
         raise ValueError("Invalid seen_verify_comment_ids")
-    comments = fetch_comments(chosen["repo"], chosen["number"], since)
+    comments = comments if comments is not None else fetch_comments(chosen["repo"], chosen["number"], since)
     candidates = explicit_command_requests(
         comments, since, chosen["updated_at"], set(seen), VERIFY_COMMAND
     )
@@ -885,10 +916,14 @@ def pick_work(repos: dict, config: dict, tasks: list[dict],
                 since = meta.get("last_seen_updated_at") or meta.get("last_reviewed_at") or "1970-01-01T00:00:00Z"
                 command_scan_done = not (task and task.get("status") in COMMANDABLE)
                 try:
+                    feedback = (
+                        _fetch_pr_feedback(repo, pr["number"], since)
+                        if task and task.get("status") in COMMANDABLE else None
+                    )
                     command_requests = []
                     if task and task.get("status") in COMMANDABLE:
                         command_requests = _eligible_bot_commands(
-                            item, since, set(seen_feedback)
+                            item, since, set(seen_feedback), feedback,
                         )
                         command_scan_done = True
                     if command_requests:
@@ -910,7 +945,9 @@ def pick_work(repos: dict, config: dict, tasks: list[dict],
                     verify_ids = []
                     if (item.get("review_authorization") != "label_added"
                             and item["kind"] != "resume"):
-                        verify_ids = _eligible_verify_ids(item, task, since)
+                        verify_ids = _eligible_verify_ids(
+                            item, task, since, feedback["issue"] if feedback is not None else None,
+                        )
                     if verify_ids:
                         item["verify_comment_ids"] = verify_ids
                         item["kind"] = "verify"
@@ -920,14 +957,16 @@ def pick_work(repos: dict, config: dict, tasks: list[dict],
                         # Leave any re-review command unseen for a later cycle.
                         item.pop("rereview_comment_ids", None)
                     else:
-                        command_ids = _eligible_rereview_ids(item, task, since)
+                        command_ids = _eligible_rereview_ids(
+                            item, task, since, feedback["issue"] if feedback is not None else None,
+                        )
                         if command_ids:
                             item["rereview_comment_ids"] = command_ids
                             item["kind"] = "review"
                             item["priority"] = 1
                             item["review_authorization"] = "approval_required"
                     feedback_ids = external_feedback_ids(
-                        repo, pr["number"], since, item["updated_at"], set(seen_feedback)
+                        repo, pr["number"], since, item["updated_at"], set(seen_feedback), feedback,
                     ) if task and item["kind"] in {"review", "feedback_check"} else []
                     if item["kind"] != "feedback_check" or feedback_ids:
                         item["feedback_comment_ids"] = feedback_ids
@@ -974,8 +1013,9 @@ def pick_work(repos: dict, config: dict, tasks: list[dict],
             if probe is None:
                 continue
             try:
+                feedback = _fetch_pr_feedback(repo, number, since)
                 command_requests = _eligible_bot_commands(
-                    probe, since, set(seen_feedback)
+                    probe, since, set(seen_feedback), feedback,
                 )
                 if command_requests:
                     probe["kind"] = "command_reply"
@@ -1008,8 +1048,9 @@ def pick_work(repos: dict, config: dict, tasks: list[dict],
                 if (not isinstance(seen_feedback, list)
                         or any(not isinstance(ident, str) for ident in seen_feedback)):
                     raise ValueError("Invalid seen_feedback_comment_ids")
+                feedback = _fetch_pr_feedback(probe["repo"], probe["number"], since)
                 command_requests = _eligible_bot_commands(
-                    probe, since, set(seen_feedback)
+                    probe, since, set(seen_feedback), feedback,
                 )
                 if command_requests:
                     probe["kind"] = "command_reply"
@@ -1033,18 +1074,20 @@ def pick_work(repos: dict, config: dict, tasks: list[dict],
                     found.append(probe)
                     break
                 verify_ids = _eligible_verify_ids(
-                    probe, by_key.get(probe["task_key"]), since
+                    probe, by_key.get(probe["task_key"]), since, feedback["issue"],
                 )
                 command_ids = []
                 feedback_ids = external_feedback_ids(
-                    probe["repo"], probe["number"], since, through, set(seen_feedback)
+                    probe["repo"], probe["number"], since, through, set(seen_feedback), feedback,
                 )
                 if verify_ids:
                     probe["verify_comment_ids"] = verify_ids
                     probe["kind"] = "verify"
                     probe["priority"] = 1
                 else:
-                    command_ids = _eligible_rereview_ids(probe, by_key.get(probe["task_key"]), since)
+                    command_ids = _eligible_rereview_ids(
+                        probe, by_key.get(probe["task_key"]), since, feedback["issue"],
+                    )
                     if command_ids:
                         probe["rereview_comment_ids"] = command_ids
                         probe["kind"] = "review"

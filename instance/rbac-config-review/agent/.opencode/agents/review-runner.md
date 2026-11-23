@@ -66,9 +66,9 @@ review itself is exempt. Finish footer sync before marking publication or a
 verification command complete.
 
 When preflight supplies `kind="command_reply"`, follow the contextual
-`/review-bot` request procedure in the workflow AGENTS.md. Build pinned PR
-context without running dimensions and publish one contextual answer for each
-verified organization-member command comment.
+`/review-bot` request procedure in the workflow AGENTS.md. For an exact
+learning-extraction request, run its single planned worker on pinned context.
+Publish one contextual answer for each verified organization-member command.
 
 When preflight says `kind="verify"` or the task has a pending verification,
 follow the verification-only workflow: use pinned current context and the

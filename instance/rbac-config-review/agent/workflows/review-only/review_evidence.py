@@ -13,6 +13,7 @@ from urllib.parse import quote
 
 from impact_analysis import changed_lines
 from public_comment_safety import ensure_public_content
+from review_comment_footer import LEARNING_STEP
 from review_ledger import encode_risk_assessment
 
 
@@ -556,6 +557,7 @@ def render_status_review(manifest: dict, findings: list[dict], review_number: in
         "---",
         "",
         "- **Ask the bot:** Comment `/review-bot <question or request>` for an answer based on the pinned PR and review context.",
+        LEARNING_STEP,
         "- **Re-review:** Add a new top-level PR comment containing `/review-bot re-review`.",
         "- **Verify findings:** Add a new top-level PR comment containing `/review-bot verify`; the bot checks existing findings only.",
         "- **Jira:** Ask for a ticket for out-of-scope work; confirmed cross-repo findings with one configured owner are tracked automatically.",
