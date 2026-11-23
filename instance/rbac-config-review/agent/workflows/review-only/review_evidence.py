@@ -521,17 +521,9 @@ def _risk_section(assessment: dict | None) -> list[str]:
     if assessment is None:
         return []
     level = assessment["risk"]
-    policies = {
-        "low": "Auto-merge may be considered after required checks and repository rules pass.",
-        "medium": "One human approval is required before merge.",
-        "high": "Two human approvals are required before merge.",
-    }
-    files = ", ".join(f"`{path}`" for path in assessment["evidence_files"])
     lines = [
         "### Change risk",
         f"**Risk:** `{level}-risk` — {assessment['explanation']}",
-        f"**Merge guidance:** {policies[level]}",
-        f"**Changed files considered:** {files}",
     ]
     if assessment.get("stale"):
         lines.append(

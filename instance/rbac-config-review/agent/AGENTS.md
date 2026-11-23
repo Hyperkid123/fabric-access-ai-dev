@@ -45,8 +45,10 @@ Dimensions can set `model_preference` in
 | `terra` | Read-only `review-terra` subagent, medium effort | Default for orchestration and dimensions without a preference; also used for broad, cross-cutting, or high-judgment analysis, including dimensions where missing a subtle interaction could affect correctness, security, architecture, or concurrency. |
 | `luna` | Read-only `review-luna` subagent, high effort | Used for explicitly routed focused checks. |
 
-The read-only `review-risk-assessor` runs once per full review to classify
-breaking-change risk. It does not run for verification or comment replies.
+The read-only `review-risk-assessor` runs first, after the PR context is pinned
+and before dimension workers, once per full review. It classifies
+breaking-change risk independently of findings. It does not run for
+verification or comment replies.
 
 The catalog's `config.model_routing.default` is `terra`. The review planner
 resolves every selected built-in or dynamic pass to a preference and worker in
