@@ -1,7 +1,7 @@
 # Dimensional Review catalog. Reviewer instructions live in this skill's reviewers/ directory.
 # All source paths are local to the directory containing SKILL.md.
 version: 7
-last_updated: '2026-11-10'
+last_updated: '2026-11-23'
 config:
   consensus_threshold: 3
   dedup_jaccard: 0.4
@@ -273,7 +273,7 @@ dimensions:
     plugin: dimensional-review:react-patternfly
     repo: dimensional-review
 - name: learning-extraction
-  default: true
+  default: false
   category: meta
   languages: all
   skip_documentation_only: true

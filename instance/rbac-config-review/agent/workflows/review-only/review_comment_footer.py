@@ -13,6 +13,8 @@ from public_comment_safety import ensure_public_content
 
 START = "<!-- dev-review-bot:comment-footer:start -->"
 END = "<!-- dev-review-bot:comment-footer:end -->"
+LEARNING_REQUEST = "learning-extraction"
+LEARNING_STEP = f"- Comment `/review-bot {LEARNING_REQUEST}` to ask for reusable lessons from this PR."
 _FOOTER = re.compile(r"\n*<!-- dev-review-bot:comment-footer:start -->\n.*?"
                      r"<!-- dev-review-bot:comment-footer:end -->\s*\Z", re.DOTALL)
 _BOT_COMMENT = re.compile(r"<!-- dev-review-bot:(?!comment-footer:)[^>]+ -->")
@@ -55,6 +57,7 @@ def with_footer(body: str, repo: str, pr: int, review_url: str | None = None) ->
     if recovery:
         steps.append(f"- Approve a fresh review with `Review bot: yes {recovery.group(1)}` or decline with `Review bot: no {recovery.group(1)}`.")
     steps.append("- Comment `/review-bot <question or request>` for an answer based on the pinned PR and review context.")
+    steps.append(LEARNING_STEP)
     if review_url:
         steps.extend([
             "- After changes, comment `/review-bot verify` to recheck existing findings.",

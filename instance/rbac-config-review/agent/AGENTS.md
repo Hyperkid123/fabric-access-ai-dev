@@ -58,10 +58,12 @@ another model during a run. Change the catalog preference when the intended
 assignment should change for future reviews.
 
 Run passes in batches of at most four concurrent workers, forming batches in
-plan order. Invoke each selected worker with the same pinned PR context and
-only its assigned dimension. Wait for all results in a batch, record them by
+plan order. Give each selected worker its assigned dimension, guide path,
+and pinned manifest path. Wait for all results in a batch, record them by
 dimension name, then start the next batch. The separate `review-verifier`
-uses Luna at high effort to attempt to refute proposed findings. If a selected
+uses Luna at high effort to attempt to refute proposed findings. The exact
+`/review-bot learning-extraction` request runs one informational pass through
+the command reply path. If a selected
 worker is unavailable, mark that pass failed and continue with the other
 planned passes; do not silently retry it with a different model. Follow the
 workflow's publication gate if no review pass completes.

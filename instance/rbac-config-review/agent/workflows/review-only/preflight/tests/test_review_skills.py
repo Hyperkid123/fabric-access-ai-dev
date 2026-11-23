@@ -53,7 +53,7 @@ def mock_gh(monkeypatch):
     return calls
 
 
-def test_default_dimensions_exclude_the_opt_in_recipe():
+def test_default_dimensions_exclude_opt_in_passes():
     catalog = yaml.safe_load((skills.SKILL_DIR / "dimensions.yaml").read_text())
     entries = {item["name"]: item for item in catalog["dimensions"]}
     default_preference = catalog["config"]["model_routing"]["default"]
@@ -67,14 +67,15 @@ def test_default_dimensions_exclude_the_opt_in_recipe():
     assert skills.model_route(entries["goose-kiss-review"], catalog) == {
         "model_preference": "terra", "review_agent": "review-terra",
     }
-    assert all(item["default"] is True for name, item in entries.items() if name != "goose-kiss-review")
-    assert entries["goose-kiss-review"]["default"] is False
+    assert {name for name, item in entries.items() if not item["default"]} == {
+        "goose-kiss-review", "learning-extraction",
+    }
     assert entries["goose-kiss-review"]["source"]["path"] == (
         "https://github.com/chmulder-rh/goose-config/blob/master/recipes/kiss-review.yaml"
     )
     selected = skills.select(catalog, ["rbac/management/mcp_views.py"], "high", None, [])
     names = {item["name"] for item in selected}
-    assert "goose-kiss-review" not in names
+    assert not {"goose-kiss-review", "learning-extraction"} & names
     assert {"correctness", "documentation", "observability"} <= names
 
 
@@ -88,11 +89,12 @@ def test_high_review_skips_code_only_passes_for_documentation_changes():
                                                     "high", None, [])} == names
     mixed = skills.select(catalog, ["docs/MCP-operator-guide.md", "rbac/management/mcp_views.py"],
                           "high", None, [])
-    assert {"correctness", "performance", "integration", "learning-extraction"} <= {
+    assert {"correctness", "performance", "integration"} <= {
         item["name"] for item in mixed
     }
-    focused = skills.select(catalog, ["docs/MCP-operator-guide.md"], "high", ["correctness"], [])
-    assert [item["name"] for item in focused] == ["correctness"]
+    focused = skills.select(catalog, ["docs/MCP-operator-guide.md"], "high",
+                            ["learning-extraction"], ["correctness"])
+    assert [item["name"] for item in focused] == ["correctness", "learning-extraction"]
 
 
 def test_repository_skill_runs_despite_default_and_level_and_receives_pinned_context(tmp_path, monkeypatch):
@@ -159,6 +161,13 @@ def test_context_builder_generates_a_fresh_skill_for_each_review_run(tmp_path, m
     assert Path(first_skill["guide_path"]).is_file()
     assert first["format"] == "custom"
     assert first["format_skills"] == ["goose-kiss-review"]
+    learning = context.build("insights-rbac", 42, "b" * 40, "c" * 40,
+                             tmp_path / "snapshots", learning_only=True)
+    assert [(item["name"], item["review_agent"]) for item in learning["review_plan"]["passes"]] == [
+        ("learning-extraction", "review-luna"),
+    ]
+    assert Path(learning["manifest_path"]) != Path(first["manifest_path"])
+    assert json.loads(Path(first["manifest_path"]).read_text())["review_plan"] == first["review_plan"]
 
 
 def test_unsupported_template_fails_instead_of_silently_misinterpreting_it():

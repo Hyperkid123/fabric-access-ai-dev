@@ -12,7 +12,7 @@ table with plain-text IDs, severity, dimension, resolution state, and a
 separate link to each inline thread.
 Scenario steps and their expected and actual results, evidence, and fixes stay
 in the inline comments. The summary ends
-with contextual-answer, re-review, and verification commands. Its hidden
+with contextual-answer, learning-extraction, re-review, and verification commands. Its hidden
 versioned ledger payload is restored from GitHub at the start of later cycles,
 so review history does not depend on an instance-local file surviving.
 
@@ -62,8 +62,9 @@ feedback cycle so bot-authored updates alone do not start a model session.
 | PR command detection | `rereview_requests.py`, `review_bot_commands.py`, `review_queue.py` | Script | Finds exact verification/re-review commands and new `/review-bot` requests in top-level comments, inline threads, and submitted review bodies; the runner answers generic requests from pinned context after organization-membership checks |
 | Jira issue creation | `.opencode/agents/jira-ticket-creator.md`, `jira_config.py` | **AI** (subagent) + script | Handles an explicit Jira request or an authorized cross-repo follow-up using the target repository's App Interface profile and an idempotency marker |
 | Model routing | `review_skills.py` + `dimensions.yaml` | Script | Resolves each pass's model preference to the configured Terra or Luna subagent in `review_plan` |
-| Review criteria | `skills/dimensional-review/SKILL.md` | **AI** (review-terra / review-luna) | Multi-dimension review over pinned context using the configured model profile; results are deduped and consensus-scored |
+| Review criteria | `skills/dimensional-review/SKILL.md` | **AI** (review-terra / review-luna) | Multi-dimension review over pinned context using the configured model profile |
 | Review workers | `.opencode/agents/review-terra.md`, `review-luna.md` | **AI** (subagents) | Read-only workers for dimensions routed to Terra or Luna |
+| Result merge | `merge_review_results.py` | Script | Validates worker results, groups duplicates, and ranks findings by consensus, severity, and confidence |
 | Risk classifier | `.opencode/agents/review-risk-assessor.md` | **AI** (subagent) | First subagent after context is pinned; independently classifies risk before dimension review |
 | Context questions and answers | `context_questions.py` | Script | Posts one marked question per comment and finds PR-author answers for the detector to assess |
 | Missing-context detector | `.opencode/agents/missing-context-detector.md` | **AI** (subagent) | Asks zero or more distinct material questions (one per comment, no fixed cap), then evaluates author answers against pinned context |
@@ -76,8 +77,8 @@ feedback cycle so bot-authored updates alone do not start a model session.
 | Inline publisher | `post_inline_comments.py` | Script | Posts or updates one anchored comment per confirmed finding on the current PR head, deduplicated by finding ID |
 | Finding thread resolver | `resolve_review_threads.py` | Script | Resolves only bot-authored finding threads whose addressed state was confirmed by the verifier and published in the status ledger |
 
-Built-in dimensions have `default: true`; the GitHub KISS recipe is
-`default: false` and may be selected explicitly. The bot's Python processor
+The learning-extraction dimension and the GitHub KISS recipe are opt-in.
+For the KISS recipe, the bot's Python processor
 reads its YAML directly and generates a per-run skill; no Goose runtime is
 required. The generated skill gets the same pinned PR, related repositories,
 docs, and impact report as the built-in passes. Recipe extensions and test
@@ -86,21 +87,19 @@ the applicable built-in dimensions, including documentation and observability.
 Terra is the default model for the primary `review-runner` and for dimensions
 without an explicit preference. Each dimension's `model_preference` selects a
 read-only worker: Terra uses `review-terra`, and Luna uses `review-luna`.
-`review_plan` records the resolved worker. Dimensions run in plan-ordered
-batches of at most four concurrent workers; each batch is recorded before the
-next starts.
-`review-verifier` separately checks findings on Luna. The risk assessor uses
+`review_plan` records the resolved worker. The runner gives each worker its
+dimension and the guide and manifest paths. Dimensions run in plan order in
+batches of at most four, and the runner records each batch before the next.
+`review-verifier` checks proposed findings and claimed fixes on Luna. An empty
+findings list uses an empty verdicts file. The risk assessor uses
 Luna at high effort as the first subagent once per full review, after context
 is pinned and before dimension workers; it does not run for verification or
 comment replies. If a preferred worker fails, that dimension is recorded as
 failed instead of being silently rerun on another model.
 The high preset remains the default. For a documentation-only diff, dimensions
-marked `skip_documentation_only` do not run; the current catalog selects six
-passes instead of fourteen. Mixed code and documentation changes still select
-the full applicable set, and an explicitly selected skill always runs.
-The review-only workflow also uses `--skip-learn`. Its LEARN phase would produce
-notes that this instance cannot save to shared memory or include in the
-validated PR review; skipping it leaves the finding and verification steps intact.
+marked `skip_documentation_only` do not run. Mixed code and documentation
+changes still select the full applicable set, and an explicitly selected skill
+always runs.
 
 Each repository can list dimension names in `review-context.yaml` under
 `repositories.<repo-key>.skills`. These skills always run for that repository,
@@ -193,10 +192,12 @@ session, preflight checks issue comments, review comments, and submitted reviews
 for unseen human-authored activity. Bot-authored updates alone do not invoke the
 model. Same-second feedback IDs are saved to prevent replay.
 New comments beginning with `/review-bot` on a tracked, unpaused PR are answered
-one comment at a time using a context-only manifest pinned to the current head
-and base. When available, the manifest includes the tracked status review,
-validated ledger findings, and finding threads with replies. Generic requests
-do not run dimensions or increment the review counter. Exact top-level
+using a manifest pinned to the current head and base. When available, the
+manifest includes the tracked status review, validated ledger findings, and
+finding threads with replies. An exact `/review-bot learning-extraction` request
+from an organization member runs just the learning-extraction worker and
+replies with reusable lessons and pinned evidence. Command replies keep the
+review counter and finding ledger intact. Exact top-level
 `/review-bot verify` and `/review-bot re-review` commands retain their
 verification and approval-gated review behavior. Replies to inline or review-
 body comments are posted as top-level PR comments linked to the source.
@@ -550,6 +551,7 @@ This PR aligns the documented role response with the fields returned by the hand
 - **Re-review:** Add a new top-level PR comment containing `/review-bot re-review`; the bot will ask for approval before reviewing.
 - **Verify findings:** Add a new top-level PR comment containing `/review-bot verify`; the bot checks existing findings only.
 - **Ask the bot:** Comment `/review-bot <question or request>` for an answer based on the pinned PR and review context.
+- Comment `/review-bot learning-extraction` to ask for reusable lessons from this PR.
 
 <!-- dev-review-bot:fabric-access-review:<head_sha>:<base_sha> -->
 <!-- dev-review-bot:risk-assessment:v1:<revision-bound-public-risk> -->
@@ -600,6 +602,7 @@ handler, make the trigger and each client step concrete:
 
 **Next steps:**
 - Comment `/review-bot <question or request>` for an answer based on the pinned PR and review context.
+- Comment `/review-bot learning-extraction` to ask for reusable lessons from this PR.
 - After changes, comment `/review-bot verify` to recheck existing findings.
 - Comment `/review-bot re-review` to request a full review (approval required).
 <!-- dev-review-bot:comment-footer:end -->

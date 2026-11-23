@@ -122,6 +122,7 @@ def test_missing_verifier_decision_blocks_review(tmp_path):
     checked = evidence.validate_findings({"findings": [finding()]}, manifest, report)
     with pytest.raises(evidence.EvidenceError, match="exactly one verdict"):
         evidence.confirmed(checked, {"verdicts": []})
+    assert evidence.confirmed([], {"verdicts": []}) == []
 
 
 def test_evidence_gate_rejects_unrelated_location_and_over_limit(tmp_path):

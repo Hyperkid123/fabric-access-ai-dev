@@ -144,7 +144,8 @@ follow-ups. The status comment has a short description of what the PR changes,
 a Change risk section with the assessed level and rationale,
 then a Findings heading with counts and a table of plain-text finding IDs,
 severity, dimension, resolution state, and separate inline-comment links. It
-ends with contextual-answer, re-review, and verification commands.
+ends with contextual-answer, learning-extraction, re-review, and verification
+commands.
 Detailed scenarios, evidence, and fixes belong in the inline comments.
 
 Every confirmed finding and action-required feedback comment that describes
@@ -252,8 +253,8 @@ Each item under `dimensions` describes one review pass. Common fields are:
 
 `language_extensions` maps changed-file suffixes to language names. Automatic
 selection uses changed paths, the chosen level, `default`, languages, file
-patterns, and documentation-only rules. Built-in entries currently have
-`default: true`; `goose-kiss-review` is a dynamic entry with `default: false`.
+patterns, and documentation-only rules. `learning-extraction` and the dynamic
+`goose-kiss-review` recipe are opt-in.
 
 The catalog's `config` holds review-wide model routing, deduplication, and
 consensus settings. `model_routing.default` selects the worker for dimensions
@@ -266,8 +267,7 @@ dimensions that must agree for a consensus finding, and `dedup_jaccard` /
 `dedup_line_range` help group findings that describe the same issue. Consensus
 affects ranking; the workflow also filters for confidence, verifies proposed
 findings, and caps publication at seven actionable findings.
-The dimensional-review skill's pre-filter currently requires confidence of at
-least `0.7` before findings are handed to verification and evidence checks.
+The merge script filters findings below `0.7` confidence before grouping.
 
 `version` identifies the catalog format and `last_updated` records when the
 catalog was last revised. Update those when maintaining the catalog.
@@ -309,12 +309,14 @@ flowchart TD
     PR --> Context["2. Pin review context<br/>diff, checkout, related repos, docs<br/>AI cost: $0"]
     Context --> Snapshot["manifest.json<br/>impact.json"]
     Snapshot --> Select["3. Select applicable dimensions<br/>write review-plan.json<br/>AI cost: $0"]
-    Select --> Runner["Luna review-runner<br/>one orchestration session, multiple turns<br/>context grows as results accumulate"]
-    Runner --> Workers["4. Dimension AI passes<br/>up to 19 enabled by default, plus configured skills<br/>likely highest combined spend: large context repeats per pass"]
+    Select --> Runner["Terra review-runner<br/>one orchestration session, multiple turns"]
+    Runner --> Risk["Luna risk assessor<br/>first subagent on full reviews"]
+    Risk --> Workers["4. Dimension AI passes<br/>up to 18 enabled by default, plus configured skills"]
     Workers --> Results["Per-dimension JSON<br/>findings + pass status"]
-    Results --> Merge["5. Luna runner merges results<br/>deduplicate + consensus rank<br/>medium cost: all pass outputs"]
+    Results --> Merge["5. Python merges results<br/>deduplicate + consensus rank<br/>AI cost: $0"]
     Merge --> Detector["Terra missing-context check<br/>one detect pass; more if answers arrive<br/>medium context: snapshot + pass results"]
-    Merge --> Verify["6. Luna verifier<br/>checks proposed findings and prior fixes<br/>cost grows with finding count and evidence"]
+    Merge -->|Findings or fixes to check| Verify["6. Luna verifier"]
+    Merge -->|No findings or fixes to check| Evidence
     Snapshot --> Workers
     Snapshot --> Detector
     Prior["Prior public-safe ledger<br/>in GitHub status review"] --> Runner
@@ -328,8 +330,8 @@ flowchart TD
 
     classDef script fill:#e2e3e5,stroke:#6c757d,color:#000;
     classDef model fill:#f8d7da,stroke:#a94442,color:#000;
-    class Queue,Context,Select,Evidence,Publish script;
-    class Runner,Workers,Merge,Detector,Verify model;
+    class Queue,Context,Select,Merge,Evidence,Publish script;
+    class Runner,Risk,Workers,Detector,Verify model;
 ```
 
 Gray boxes are deterministic scripts; the red boxes call models. AI cost labels
@@ -341,17 +343,16 @@ bot-memory tracks task progress and review metadata.
 
 | AI stage | Calls per full review | Relative spend | What makes its context large |
 |---|---:|---|---|
-| Luna `review-runner` | One session with multiple turns | Medium to high | Workflow instructions, pinned PR snapshot, dimension plan, then accumulated worker outputs and prior findings. |
-| Terra/Luna dimension workers | One per selected dimension; up to 19 default-enabled dimensions, plus repository-required skills | **Likely highest combined spend** | Each pass receives the PR diff and relevant checkout sources, related-repository snapshots, linked docs, impact candidates, and its own reviewer guide. Most of this shared context is sent again for each pass. |
+| Terra `review-runner` | One session with multiple turns | Medium to high | Workflow instructions, pinned PR snapshot, dimension plan, then accumulated worker outputs and prior findings. |
+| Luna risk assessor | One pass before dimension review | Depends on diff size | Reads the full pinned diff and related context relevant to risk. |
+| Terra/Luna dimension workers | One per selected dimension, plus repository-required skills | **Likely highest combined spend** | Workers start with the manifest and guide paths, then read the diff and relevant pinned sources locally. |
 | Terra missing-context detector | One detection pass; another assessment when new author answers need review | Medium | Pinned snapshot plus dimension findings; answer assessment also adds the original question and author response. |
-| Luna verifier | At least one pass for proposed findings; extra checks for addressed findings or custom formatting | Medium; rises with findings | Proposed findings, evidence excerpts and pinned references; re-review also carries prior open ledger entries. |
-| Queue, context build, dimension selection, evidence validation, publishing | No model calls | **$0 AI** | These are Python/API/git operations. They can use compute or API quota, but consume no model tokens. |
+| Luna verifier | One pass when there are proposed findings, with separate checks for addressed findings or custom formatting | Rises with findings | Proposed findings, evidence excerpts, and pinned references. |
+| Queue, context build, dimension selection, merge, evidence validation, publishing | No model calls | **$0 AI** | Python, API, and Git operations. |
 
-The current catalog has 19 default-enabled dimensions: 6 prefer Terra and 13
-prefer Luna. If all apply, those 19 dimension-worker calls are in addition to
-the runner, detector, and verifier work. Applicability filters often reduce
-the number that run. A repository can add required skills, so 19 is not a hard
-maximum. A no-work preflight ends before the model session and has $0 AI cost.
+The current catalog has 18 default-enabled dimensions. Six prefer Terra and
+12 prefer Luna. Applicability determines how many run, and repositories may
+add required skills. A no-work preflight ends before the model session.
 
 The largest context driver is **multiplication**: the changed code and related
 context are reused across the selected dimension calls. Long diffs, large
@@ -410,9 +411,8 @@ flowchart TD
 For the coordinator, the largest context driver is **project size and history**:
 more same-Team children, longer ticket descriptions, many dependency links,
 and accumulated control-ticket comments. Each POC request in a new control
-comment can trigger another coordinator cycle. It does not fan the same project
-context out across 19 dimension workers, so its cost is usually dominated by
-one growing orchestration context instead of repeated parallel review inputs.
+comment can trigger another coordinator cycle. Its cost is usually dominated
+by one growing orchestration context.
 The coordinator only creates a POC when the user explicitly asks in a new
 control-ticket comment; the creation action itself does not add another model
 call.
@@ -444,26 +444,28 @@ tokens to that agent's prompt.
    repository skills. The result, `review-plan.json`, records each selected
    dimension, its local or generated guide, model preference, and worker
    (`review-terra` or `review-luna`).
-3. **Run independent passes.** The Luna `review-runner` loads each guide and
-   passes it the same pinned PR context, diff, related-repository snapshots,
-   linked documents, and impact candidates. Each worker checks its own concern,
+3. **Run independent passes.** The Terra `review-runner` passes each worker its
+   dimension name and the guide and manifest paths. Each worker reads its guide
+   and the relevant pinned sources for its own concern,
    such as correctness, security, API contracts, performance, or database
    behavior. Up to four passes run concurrently; the runner waits for each
    batch and records the result under its dimension. Each result is JSON with
    a dimension name, `pass`/`warn`/`fail`, summary, and findings. Findings need
    confidence of at least `0.7`, an impact, and a source location. A failed
    worker is recorded as failed; the bot does not silently switch models.
-4. **Combine overlapping findings.** The runner collects findings across
-   dimensions. It groups similar reports from different dimensions when their
-   word-set Jaccard similarity is at least `0.4`, or they refer to the same
-   file within five lines. It keeps the report with the longest evidence as
-   canonical, records which dimensions agreed, and ranks consensus findings
-   first. Three agreeing dimensions count as consensus; five agreeing
+4. **Combine overlapping findings.** The runner passes results to
+   `merge_review_results.py`. It groups reports from different dimensions
+   when every pair meets the title similarity threshold or refers to the same
+   file within five lines. It uses the longest evidence and keeps the highest
+   severity in each group. It records which dimensions agreed and ranks by
+   agreement, severity, and confidence. Three agreeing dimensions count as
+   consensus. Five agreeing
    dimensions can raise a low-severity item to medium. The workflow converts
    retained findings to stable IDs such as `F1` and keeps no more than seven
    for publication.
 5. **Challenge and validate.** `review-verifier` independently tries to
-   refute each proposed finding using pinned sources. Then
+   refute each proposed finding using pinned sources. An empty findings list
+   uses an empty verdicts file. Then
    `review_evidence.py` requires a verdict for every finding, checks that its
    location is in the PR diff, and checks every evidence reference against the
    SHAs and files in `manifest.json`. Unsupported reports are excluded. The
@@ -550,6 +552,13 @@ only threads for findings confirmed as addressed by the verifier. After the
 status update and thread resolutions, the bot posts one reply per verification
 command with links to the request and updated status review. Retries use a
 hidden marker on each reply to avoid duplicates.
+
+On a tracked, unpaused PR, a verified organization member can comment
+`/review-bot learning-extraction` to get reusable lessons from the current
+pinned change. The bot runs just the learning-extraction pass and posts its
+answer as a PR comment with evidence links. The command works in top-level
+comments, inline review threads, and submitted review bodies.
+
 Every bot comment other than the status review ends with a Status Comment link
 and Next steps. Approval and context questions include their exact reply
 syntax. Comments posted before the first status review show that status is

@@ -13,7 +13,7 @@ from urllib.parse import quote
 
 from post_review import api
 from public_comment_safety import ensure_public_content
-from review_comment_footer import status_url, with_footer
+from review_comment_footer import LEARNING_REQUEST, status_url, with_footer
 
 
 COMMAND_PREFIX = "/review-bot"
@@ -95,7 +95,7 @@ def requests(comments: list[dict], source: str, repo: str, pr: int,
                 url = f"https://github.com/{repo}/pull/{pr}#discussion_r{ident}"
             else:
                 url = f"https://github.com/{repo}/pull/{pr}#pullrequestreview-{ident}"
-        result.append({
+        entry = {
             "id": ident,
             "source": source,
             "feedback_id": feedback_id,
@@ -104,7 +104,10 @@ def requests(comments: list[dict], source: str, repo: str, pr: int,
             "url": url,
             "request": request,
             "too_long": too_long,
-        })
+        }
+        if request.casefold() == LEARNING_REQUEST:
+            entry["action"] = LEARNING_REQUEST
+        result.append(entry)
         emitted.add(feedback_id)
     return sorted(result, key=lambda item: (timestamp(item["created_at"]), item["id"]))
 
