@@ -17,7 +17,7 @@ RISK_LABELS = {
     "low": {
         "name": "low-risk",
         "color": "0e8a16",
-        "description": "Low breaking risk; auto-merge may be considered after required checks and repository rules pass.",
+        "description": "Very low risk; future auto-merge candidate only if all checks and repository rules pass.",
     },
     "medium": {
         "name": "medium-risk",

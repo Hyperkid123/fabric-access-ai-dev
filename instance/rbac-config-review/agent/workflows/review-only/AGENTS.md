@@ -374,7 +374,22 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    tracked GitHub summary; its `open` entries are findings not yet confirmed
    fixed. A local `ledger_path` from task metadata is only a one-time legacy
    fallback and must never be treated as durable state.
-3. Read `review_plan` from the manifest. `build_context.py` has already
+3. Before any review dimension worker runs, ask `review-risk-assessor` to
+   classify the full pinned change. This is the first subagent call in a full
+   review, after context is ready. Give it the pinned diff, manifest, changed
+   paths, and relevant pinned related-repository context. It must examine the
+   whole diff independently; do not wait for dimension findings or verifier
+   results. Save exactly
+   `{"risk":"low|medium|high","explanation":"...",
+   "evidence_files":["changed/path"]}` as `risk-assessment.json`. Evidence
+   files must be among this PR's changed paths. If the subagent is unavailable
+   or returns invalid output, stop without publishing; do not guess the level.
+   Apply the conservative level rules in
+   `agent/.opencode/agents/review-risk-assessor.md`: low is allowed only when
+   every low-risk condition holds, and any material uncertainty means at least
+   medium.
+
+   Then read `review_plan` from the manifest. `build_context.py` has already
    selected the passes and generated per-run skills for any selected recipe
    dimensions using this bot's YAML processor. Load the general
    explanatory-answer skill (`agent/skills/explanatory-answer/SKILL.md`).
@@ -571,19 +586,10 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    refute every "addressed" claim among them the same way (it needs no
    verdict for "still_open"/"uncertain" claims — those assert nothing to
    refute). Save as a second verdicts file in the same shape.
-   Ask `review-risk-assessor` once per full review after dimension results and
-   verifier verdicts are ready. Give it the complete pinned diff and manifest,
-   relevant related-repository context, proposed findings, and verifier
-   results. The changed diff is primary evidence; findings are supporting
-   context, not a substitute for checking the whole change. Save exactly
-   `{"risk":"low|medium|high","explanation":"...",
-   "evidence_files":["changed/path"]}` as `risk-assessment.json`. Evidence
-   files must be among this PR's changed paths. If the subagent is unavailable
-   or returns invalid output, stop without publishing; do not guess the level.
-   Low risk means auto-merge may be considered after checks and repository
-   rules pass; medium risk requires one human approval; high risk requires two.
-   The bot explains and labels this guidance but does not enforce branch rules
-   or merge PRs.
+   The risk assessment created before dimension review is revision-bound and
+   must be passed unchanged to the evidence gate. Medium risk requires one
+   human approval; high risk requires two. The bot does not enforce branch
+   rules or merge PRs.
 5. Write this cycle's findings, publication JSON, inline comments and output ledger in a
    cycle-specific directory under the snapshot (for example `cycles/<number>`),
    distinct from the previous ledger. This also applies to repeated reviews

@@ -32,11 +32,11 @@ flowchart LR
     Memory[("bot-memory")] <--> A
     subgraph Cycle["one cycle, at most one PR"]
         A["Preflight<br/>(review_queue.py)"] --> B["Context<br/>(build_context.py)"]
-        B --> C["Review<br/>(Terra/Luna by dimension)"]
+        B --> R["Classify risk first<br/>(review-risk-assessor)"]
+        R --> C["Review<br/>(Terra/Luna by dimension)"]
         C --> M["Check missing context<br/>(missing-context-detector)"]
         M --> D["Verify<br/>(review-verifier)"]
-        D --> R["Classify risk<br/>(review-risk-assessor)"]
-        R --> E["Publish<br/>(comments, summary, risk label)"]
+        D --> E["Publish<br/>(comments, summary, risk label)"]
     end
     E --> GH2["GitHub review summary + inline threads + one risk label"]
     E -.-> Memory
@@ -48,7 +48,7 @@ flowchart LR
 ```
 
 Gray = deterministic script, $0, no model call. Red = an LLM reasons over
-pinned context and can be wrong. `C`, `M`, `D`, and `R` spend tokens during a
+pinned context and can be wrong. `R`, `C`, `M`, and `D` spend tokens during a
 review; `A`, `B`, and `E` are plain Python. Preflight checks comments before a
 feedback cycle so bot-authored updates alone do not start a model session.
 
@@ -64,7 +64,7 @@ feedback cycle so bot-authored updates alone do not start a model session.
 | Model routing | `review_skills.py` + `dimensions.yaml` | Script | Resolves each pass's model preference to the configured Terra or Luna subagent in `review_plan` |
 | Review criteria | `skills/dimensional-review/SKILL.md` | **AI** (review-terra / review-luna) | Multi-dimension review over pinned context using the configured model profile; results are deduped and consensus-scored |
 | Review workers | `.opencode/agents/review-terra.md`, `review-luna.md` | **AI** (subagents) | Read-only workers for dimensions routed to Terra or Luna |
-| Risk classifier | `.opencode/agents/review-risk-assessor.md` | **AI** (subagent) | Assesses breaking-change risk once per full review with an explanation and changed-file evidence |
+| Risk classifier | `.opencode/agents/review-risk-assessor.md` | **AI** (subagent) | First subagent after context is pinned; independently classifies risk before dimension review |
 | Context questions and answers | `context_questions.py` | Script | Posts one marked question per comment and finds PR-author answers for the detector to assess |
 | Missing-context detector | `.opencode/agents/missing-context-detector.md` | **AI** (subagent) | Asks zero or more distinct material questions (one per comment, no fixed cap), then evaluates author answers against pinned context |
 | Explanation quality | `skills/explanatory-answer/SKILL.md` | **AI** (review-runner) | General guidance for direct answers, causal reasoning, evidence, and requested Mermaid diagrams; this workflow maps it to finding fields |
@@ -90,7 +90,8 @@ read-only worker: Terra uses `review-terra`, and Luna uses `review-luna`.
 batches of at most four concurrent workers; each batch is recorded before the
 next starts.
 `review-verifier` separately checks findings on Luna. The risk assessor uses
-Luna at high effort once per full review; it does not run for verification or
+Luna at high effort as the first subagent once per full review, after context
+is pinned and before dimension workers; it does not run for verification or
 comment replies. If a preferred worker fails, that dimension is recorded as
 failed instead of being silently rerun on another model.
 The high preset remains the default. For a documentation-only diff, dimensions
@@ -536,10 +537,6 @@ This PR aligns the documented role response with the fields returned by the hand
 ### Change risk
 
 **Risk:** `medium-risk` — The change updates a client-visible response contract, so existing consumers may need to adapt.
-
-**Merge guidance:** One human approval is required before merge.
-
-**Changed files considered:** `api/response.py`, `docs/api.md`
 
 ### Findings (2 total; 1 open, 1 addressed)
 

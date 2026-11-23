@@ -141,7 +141,7 @@ Write comments for developers working on this project: direct, technically
 precise, and easy to scan. Use short sentences and standard terminology. This
 applies to status comments, inline findings, context questions, and answer
 follow-ups. The status comment has a short description of what the PR changes,
-a Change risk section with the assessed level, rationale, and merge guidance,
+a Change risk section with the assessed level and rationale,
 then a Findings heading with counts and a table of plain-text finding IDs,
 severity, dimension, resolution state, and separate inline-comment links. It
 ends with contextual-answer, re-review, and verification commands.
@@ -605,33 +605,59 @@ GitHub PR label selected by `review-context.yaml: review_label`.
 
 ## Review risk labels
 
-After a full review, the Luna `review-risk-assessor` evaluates the pinned diff,
-produces a short rationale and changed-file evidence, and the publisher applies
-exactly one of these labels:
+For a full review, the Luna `review-risk-assessor` is the first subagent called
+after the PR context is pinned and before dimension workers. It evaluates the
+whole pinned diff independently, then provides a rationale and changed-file
+evidence. The publisher applies exactly one of these labels after review
+validation:
 
-| Label | Merge guidance |
+| Label | Risk definition |
 |---|---|
-| `low-risk` | Auto-merge may be considered after required checks and repository rules pass. |
-| `medium-risk` | One human approval is required before merge. |
-| `high-risk` | Two human approvals are required before merge. |
+| `low-risk` | Exceptionally low risk; every condition below must hold. It may be considered by future auto-merge automation only. |
+| `medium-risk` | Bounded behavior, compatibility, configuration, or integration change with plausible but limited regression impact; one human approval is required. |
+| `high-risk` | Broad or hard-to-reverse impact such as authorization/security changes, destructive or complex migrations, data loss, incompatible shared contracts, or deployment changes with a wide failure domain; two human approvals are required. |
 
-The status review includes the risk explanation and the same guidance. The bot
-does not merge PRs or change branch protection; repository rules must enforce
-the human approval counts. Verification and comment-answer cycles do not run
-the risk assessor or change labels. When a full review finds a different risk,
-the publisher replaces the previous risk label.
+Use `low-risk` only when all of these criteria are met:
+
+- The change is documentation, comments, tests, or a mechanically obvious,
+  behavior-preserving code change; it does not materially change production
+  behavior or a user-visible contract. Documentation does not alter a
+  normative promise, and test changes do not weaken existing coverage or CI
+  protections.
+- The change is local, isolated, and readily reversible, with no meaningful
+  cross-repository or consumer impact.
+- It does not affect authorization/security, persisted data or schema,
+  migrations, APIs/protocols, dependencies, deployment/operations,
+  concurrency, or destructive lifecycle behavior.
+- Relevant behavior is fully understood and supported by adequate tests and
+  pinned evidence, with no material unknowns.
+
+A small diff or no confirmed findings is not enough for `low-risk`. Any unmet
+condition or material uncertainty means at least `medium-risk`; choose
+`high-risk` when the plausible impact is broad or hard to reverse. Ordinary
+production behavior changes are at least `medium-risk`.
+
+The status review shows the risk level and explanation, without merge guidance
+or a changed-file list. `low-risk` does not currently trigger a merge. Any
+future auto-merge automation must independently require all applicable checks
+and repository merge rules to pass, with no unresolved blocking findings or
+required changes; the risk label alone is not authorization.
+The bot does not merge PRs or change branch protection. Verification and
+comment-answer cycles do not run the risk assessor or change labels. When a
+full review finds a different risk, the publisher replaces the previous risk
+label.
 
 | Profile | Agent | Configured model | Reasoning effort |
 |---|---|---|---|
 | `terra` | `review-runner`, `review-terra` | `rehor-openai/gpt-6.1-terra` | Medium |
 | `luna` | `review-luna`, `review-verifier`, `review-risk-assessor` | `rehor-openai/gpt-6-luna` | High |
 
-The primary `review-runner` uses Terra for orchestration. Dimension passes are
-dispatched in batches of at most four concurrent workers to `review-terra` or
-`review-luna` according to the resolved model preference. Results are recorded
-by dimension before the next batch. The `review-verifier` uses Luna to refute
-proposed findings, and `review-risk-assessor` uses Luna to classify risk once
-per full review. See the [runner config](agent/.opencode/agents/review-runner.md),
+The primary `review-runner` uses Terra for orchestration. The risk assessor
+uses Luna at high effort as the first subagent after context is pinned.
+Dimension passes are dispatched in batches of at most four concurrent workers
+to `review-terra` or `review-luna` according to the resolved model preference.
+Results are recorded by dimension before the next batch. The
+`review-verifier` uses Luna to refute proposed findings. See the [runner config](agent/.opencode/agents/review-runner.md),
 [Terra reviewer config](agent/.opencode/agents/review-terra.md),
 [Luna reviewer config](agent/.opencode/agents/review-luna.md),
 [verifier config](agent/.opencode/agents/review-verifier.md),
