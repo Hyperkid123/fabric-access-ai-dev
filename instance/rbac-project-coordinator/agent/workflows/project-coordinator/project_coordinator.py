@@ -482,6 +482,7 @@ def evaluate(control: dict, children: list[dict], repo_names: set[str], implemen
     current_phase = incomplete_phases[0] if incomplete_phases else None
     ready: list[dict] = []
     waiting: list[str] = []
+    blocked_tickets: list[dict] = []
     if current_phase and not gaps:
         for ticket in phases[current_phase]:
             if ticket["status"].lower() in COMPLETE_STATUSES or ticket["implementation_labeled"]:
@@ -493,14 +494,17 @@ def evaluate(control: dict, children: list[dict], repo_names: set[str], implemen
                 waiting.append(ticket["key"])
                 continue
             child_repos = {label[5:] for label in ticket["repo_labels"]}
+            blockers: list[str] = []
             if child_repos and (child_repos - allowed_repos or child_repos - repo_names):
-                gaps.append(f"{ticket['key']} has a repo outside the control ticket's allowed repos")
-                continue
-            if ticket["status"].lower() not in START_STATUSES or ticket["assignee"]:
-                gaps.append(f"{ticket['key']} is not unassigned in a not-started status")
-                continue
+                blockers.append("repo label is outside the control ticket's allowlist")
+            if ticket["status"].lower() not in START_STATUSES:
+                blockers.append(f"status {ticket['status']} is not not-started")
+            if ticket["assignee"]:
+                blockers.append("ticket is not unassigned")
             if not ticket["active_sprint"] and not include_backlog:
-                gaps.append(f"{ticket['key']} is outside the active sprint and backlog intake is disabled")
+                blockers.append("ticket is outside the active sprint and backlog intake is disabled")
+            if blockers:
+                blocked_tickets.append({"key": ticket["key"], "reasons": blockers})
                 continue
             ready.append({"key": ticket["key"], "repo_candidates": sorted(child_repos or allowed_repos)})
 
@@ -511,6 +515,7 @@ def evaluate(control: dict, children: list[dict], repo_names: set[str], implemen
         "gaps": gaps,
         "ready": ready if not gaps else [],
         "waiting": waiting,
+        "blocked_tickets": blocked_tickets,
         "tickets": tickets,
     }
 

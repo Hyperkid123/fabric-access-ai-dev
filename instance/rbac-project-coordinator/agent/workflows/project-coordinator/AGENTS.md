@@ -18,8 +18,9 @@ only conversation and status surface. Implementations stay with the existing
   direct child. Never add the implementation bot label to the parent or
   control ticket.
 - Phase labels (`phase:01`, `phase:02`, ...) live **only on implementation
-  tickets**. The coordinator applies proposed phases only after the user approves
-  the setup proposal.
+  tickets**. The coordinator applies proposed phases after the user explicitly
+  approves the setup proposal or uses `/coord start` to authorize a fresh,
+  validated setup and handoff.
   The control ticket has exactly one state label:
   `dev-bot-coordinator:needs-plan`, `dev-bot-coordinator:active`,
   `dev-bot-coordinator:blocked`, or `dev-bot-coordinator:complete`.
@@ -55,7 +56,8 @@ steps`, and an `Actions:` footer. Pass `comment_type` such as `Initial plan`,
 coordinator comments. Suggestions should apply to the overall plan, not repeat
 the ticket table. Do not assign or move tickets to a sprint; sprint eligibility
 is read-only. Phase suggestions remain advisory until the user approves the
-setup proposal. The coordinator never creates or changes Jira issue links.
+setup proposal or `/coord start` authorizes its fresh application. The
+coordinator never creates or changes Jira issue links.
 
 ## Cycle
 
@@ -80,10 +82,13 @@ setup proposal. The coordinator never creates or changes Jira issue links.
    include a `coordinator-setup` JSON block containing `repository` and a complete
    `phase_assignments` mapping. Ask the user
    to correct any suggestion or reply with `approve` or `approved` to approve
-   the complete setup. Approval detection reads Jira rich-text comments,
-   including mentions and surrounding formatting. The user approves the
-   suggestion; they do not edit Jira labels or links. Do not apply setup before
-   that approval. If the Team field cannot be
+   the setup without starting implementation, or `/coord start` to recheck the
+   complete plan, apply a clear setup, and release eligible tickets. Approval
+   detection reads Jira rich-text comments, including mentions and surrounding
+   formatting. The user approves the suggestion; they do not edit Jira labels
+   or links. Do not apply setup during a scheduled scan or from a plan request;
+   `/coord start` is explicit authorization to apply a newly rechecked, clear
+   setup. If the Team field cannot be
    parsed, stop and report the parser issue; never ask the user to re-enter a
    valid Team value. Set `dev-bot-coordinator:needs-plan`.
 
@@ -95,23 +100,49 @@ setup proposal. The coordinator never creates or changes Jira issue links.
 4. **New control comments**: a user comment containing the word `approve` or
    `approved` (including `/coord approve setup`) applies the latest proposed
    repository label to the control ticket and phase labels to all listed
-   implementation tickets. It does not create or change Jira issue links. Use
-   only the validated `approve-setup` action. It reads the proposal from the
-   preceding coordinator comment and rechecks Team, parent, repo, and phase
-   scope. `/coord start` asks the coordinator to recheck the
-   plan gate and release currently runnable tickets. It uses the same validated
-   handoff and repo label mapping as an automatic progress cycle. `/coord plan`
-   rereads the current parent, control ticket, and every same-Team implementation
-   ticket, then publishes a fresh plan using the template above. Planning does
-   not hand off tickets or change their labels, assignees, links, or sprint
-   membership. Ask for new approval before applying changed phase or repo
-   proposals. `/coord status` gets a fresh status comment.
+   implementation tickets, but does not hand off tickets. It does not create or
+   change Jira issue links. Use only the validated `approve-setup` action. It
+   reads the proposal from the preceding coordinator comment and rechecks Team,
+   parent, repo, and phase scope.
+
+   `/coord start` is the single command to begin implementation. In the same
+   cycle, reread the parent, control ticket, every same-Team implementation
+   ticket, current dependencies, and newest user comments from Jira. Do not
+   rely on the preflight snapshot alone. Judge the complete plan and acceptance
+   criteria before writing anything. If the control is in `needs-plan` or has
+   no state, and the freshly checked plan is clear, build a complete inline
+   `repository` and `phase_assignments` proposal and call the validated
+   `approve-setup` action with the `/coord start` comment ID and that proposal.
+   This command itself authorizes applying the clear setup; no separate
+   `/coord approve setup` is needed. The action rechecks Team, parent, all
+   same-Team children, configured repos, and phase coverage before adding repo
+   and phase labels. If scope, acceptance criteria, dependencies, or repo
+   selection remain unclear, do not apply setup or release any ticket; keep
+   `needs-plan` (or set `blocked` if an already-active project cannot progress)
+   and comment with the specific missing information.
+
+   Once the plan gate passes, set the control to `active`, then call the
+   validated `handoff` action separately for each eligible ticket in the lowest
+   incomplete phase. Choose that ticket's allowed repo from its scope and
+   re-read Jira before each action. A status, assignee, sprint, or repo
+   eligibility blocker applies only to that ticket: report its exact reason and
+   continue with other eligible tickets. Structural plan gaps stop all
+   handoffs. Handoff is label-based; do not change Jira assignees or sprint
+   membership. If the project is already active, `/coord start` still performs
+   the fresh read and releases currently eligible tickets, without reapplying
+   setup to started or handed-off tickets.
+
+   `/coord plan` rereads the current parent, control ticket, and every same-Team
+   implementation ticket, then publishes a fresh plan using the template above.
+   Planning does not hand off tickets or change their labels, assignees, links,
+   or sprint membership. `/coord status` gets a fresh status comment.
    `/coord create P-1` may create one previously proposed ticket.
    `/coord complete project` can finish the project only when all same-Team
    implementation tickets are complete. Other comments may clarify the plan,
    answer setup questions, correct the repo or phase proposal, or request
-   proposals. After any user correction, refresh the setup proposal and wait
-   for a new `approve` or `approved` comment; never apply an older proposal.
+   proposals. After any user correction, refresh the setup proposal. A
+   subsequent `/coord start` must use the freshly rechecked proposal; never
+   apply an older one.
    Do not execute historical comments on the first enrollment.
 5. **Plan gate**: the first phase must exist; the path through its tickets,
    parallel work, and exit criteria must be clear. Use existing directional
@@ -190,7 +221,7 @@ Actions and required request keys:
 | Action | Keys in addition to `action`, `control_key` |
 |---|---|
 | `set-state` | `state` |
-| `approve-setup` | `request_comment_id` (new user comment containing `approve` or `approved`) |
+| `approve-setup` | `request_comment_id` (user `approve`/`approved` or exact `/coord start`); `proposal` (fresh inline object required for `/coord start`) |
 | `handoff` | `ticket_key`, `repos` (list of repo names) |
 | `label-review-prs` | `ticket_key` (implementation ticket with the bot label) |
 | `create-ticket` | `request_comment_id`, `proposal_id`, `phase`, `summary`, `description` |

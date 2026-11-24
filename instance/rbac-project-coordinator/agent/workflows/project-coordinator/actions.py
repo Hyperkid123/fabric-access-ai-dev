@@ -46,11 +46,15 @@ STATES = COORD_STATES
 ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 LABEL_RE = re.compile(r"^[A-Za-z0-9:_-]+$")
 SETUP_PROPOSAL_RE = re.compile(r"```(?:[A-Za-z0-9_-]+)?\s*(.*?)\s*```", re.DOTALL)
-SETUP_APPROVAL_RE = re.compile(r"\b(?:approve|approved)\b", re.IGNORECASE)
+START_COMMAND_RE = re.compile(r"^\s*/coord\s+start\s*$", re.IGNORECASE)
+SETUP_AUTHORIZATION_RE = re.compile(
+    r"\b(?:approve|approved)\b|^\s*/coord\s+start\s*$",
+    re.IGNORECASE,
+)
 COMMAND_HELP_FOOTER = """---
 **Actions:**
 - `approve` / `approved` (or `/coord approve setup`) — approve the latest setup proposal.
-- `/coord start` — recheck the plan and release currently runnable tickets.
+- `/coord start` — reread the plan, apply a clear setup, and release each eligible ticket.
 - `/coord plan` — reread current Jira data and publish a fresh plan without handing off tickets.
 - `/coord status` — request a fresh project status.
 - `/coord create P-<number>` — create a ticket proposed in an earlier coordinator comment.
@@ -240,7 +244,23 @@ def handoff(request: dict, config: tuple[str, str, str]) -> dict:
     ticket_key = request["ticket_key"]
     ready = {item["key"]: item for item in assessment["ready"]}
     if ticket_key not in ready:
-        raise ValueError("Ticket is not an unblocked runnable ticket")
+        ticket = next(
+            (item for item in assessment["tickets"] if item["key"] == ticket_key),
+            None,
+        )
+        blocked = next(
+            (item for item in assessment["blocked_tickets"] if item["key"] == ticket_key),
+            None,
+        )
+        if blocked:
+            raise ValueError(f"{ticket_key} is blocked: {'; '.join(blocked['reasons'])}")
+        if ticket_key in assessment["waiting"]:
+            dependencies = ticket.get("blockers", []) if ticket else []
+            detail = ", ".join(dependencies) or "an incomplete or external dependency"
+            raise ValueError(f"{ticket_key} is waiting on blocking dependency: {detail}")
+        if ticket and ticket["implementation_labeled"]:
+            raise ValueError(f"{ticket_key} is already released to the implementation bot")
+        raise ValueError(f"{ticket_key} is not a runnable ticket in the lowest incomplete phase")
     child = checked_child(control, ticket_key, team_field_id)
     if not any(PHASE_RE.fullmatch(label) for label in labels(child)):
         raise ValueError("Implementation ticket has no phase label")
@@ -345,8 +365,12 @@ def request_comment(control: dict, comment_id: str, command_pattern: str) -> dic
     return item
 
 
-def setup_proposal(control: dict, approval_comment_id: str) -> dict:
-    """Read the latest coordinator setup proposal before the explicit approval."""
+def setup_proposal(
+    control: dict,
+    approval_comment_id: str,
+    inline_proposal: object | None = None,
+) -> dict:
+    """Read a proposal after approval, or accept a fresh plan authorized by /coord start."""
     items = comments(control)
     approval_indexes = [
         index for index, item in enumerate(items)
@@ -358,7 +382,7 @@ def setup_proposal(control: dict, approval_comment_id: str) -> dict:
     approved_comment = request_comment(
         control,
         approval_comment_id,
-        SETUP_APPROVAL_RE.pattern,
+        SETUP_AUTHORIZATION_RE.pattern,
     )
     if str(approved_comment.get("id") or "") != approval_comment_id:
         raise ValueError("Setup approval comment changed during validation")
@@ -366,7 +390,16 @@ def setup_proposal(control: dict, approval_comment_id: str) -> dict:
         not is_own_comment(item)
         for item in items[approval_index + 1:]
     ):
-        raise ValueError("Setup approval is stale; review the latest user feedback and approve again")
+        raise ValueError("Setup request is stale; review the latest user feedback and submit a fresh request")
+    is_start = bool(START_COMMAND_RE.fullmatch(comment_body(approved_comment).strip()))
+    if is_start and inline_proposal is None:
+        raise ValueError("/coord start requires a fresh inline setup proposal after rereading Jira")
+    if inline_proposal is not None:
+        if not is_start:
+            raise ValueError("Inline setup proposals require an explicit /coord start request")
+        if not isinstance(inline_proposal, dict):
+            raise ValueError("Inline setup proposal must be an object")
+        return inline_proposal
     for proposal_index in range(approval_index - 1, -1, -1):
         item = items[proposal_index]
         body = comment_body(item)
@@ -392,13 +425,13 @@ def setup_proposal(control: dict, approval_comment_id: str) -> dict:
 
 
 def approve_setup(request: dict, config: tuple[str, str, str]) -> dict:
-    """Apply the latest proposed repo allowlist and phases after approval."""
+    """Apply a repo allowlist and phase plan after explicit user authorization."""
     control = checked_control(request["control_key"], config)
     _, team_field_id, implementation_label = config
     comment_id = str(request.get("request_comment_id") or "")
     if not comment_id:
         raise ValueError("request_comment_id is required")
-    proposal = setup_proposal(control, comment_id)
+    proposal = setup_proposal(control, comment_id, request.get("proposal"))
 
     repo_name = proposal.get("repository")
     repo_names = set(load_project_repos())
