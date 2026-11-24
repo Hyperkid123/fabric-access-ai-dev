@@ -1,7 +1,7 @@
 # Dimensional Review catalog. Reviewer instructions live in this skill's reviewers/ directory.
 # All source paths are local to the directory containing SKILL.md.
-version: 7
-last_updated: '2026-11-23'
+version: 8
+last_updated: '2026-11-24'
 config:
   consensus_threshold: 3
   dedup_jaccard: 0.4
@@ -66,6 +66,43 @@ review_levels:
     high:
       description: Maximum review coverage across every applicable dimension.
       all_applicable: true
+package_upgrade_profile:
+  file_patterns:
+  - '**/go.mod'
+  - '**/go.sum'
+  - '**/go.work'
+  - '**/go.work.sum'
+  - '**/package.json'
+  - '**/package-lock.json'
+  - '**/npm-shrinkwrap.json'
+  - '**/yarn.lock'
+  - '**/pnpm-lock.yaml'
+  - '**/Cargo.toml'
+  - '**/Cargo.lock'
+  - '**/requirements*.txt'
+  - '**/Pipfile'
+  - '**/Pipfile.lock'
+  - '**/pyproject.toml'
+  - '**/poetry.lock'
+  - '**/uv.lock'
+  - '**/Gemfile'
+  - '**/Gemfile.lock'
+  - '**/pom.xml'
+  - '**/build.gradle'
+  - '**/build.gradle.kts'
+  - '**/gradle.lockfile'
+  - '**/gradle/libs.versions.toml'
+  - '**/*.csproj'
+  - '**/packages.lock.json'
+  - '**/composer.json'
+  - '**/composer.lock'
+  - '**/mix.exs'
+  - '**/mix.lock'
+  - '**/pubspec.yaml'
+  - '**/pubspec.lock'
+  dimensions:
+  - package-upgrades
+  - cross-repo-dependencies
 dimensions:
 - name: correctness
   default: true
@@ -245,6 +282,16 @@ dimensions:
   source:
     path: reviewers/vulnerability.md
     plugin: dimensional-review:vulnerability
+    repo: dimensional-review
+- name: package-upgrades
+  default: false
+  category: specialist
+  languages: all
+  description: Runtime compatibility, transitive effects, and security impact of dependency version changes
+  model_preference: luna
+  source:
+    path: reviewers/package-upgrades.md
+    plugin: dimensional-review:package-upgrades
     repo: dimensional-review
 - name: go-idioms
   default: true

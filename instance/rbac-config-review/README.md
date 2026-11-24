@@ -3,7 +3,10 @@
 This directory configures the `rbac-config-review` instance of the Fabric Access
 bot. It reviews open GitHub pull requests and publishes a review summary and
 anchored inline comments. The workflow is read-only with respect to source code:
-it does not edit files, commit, push, approve, request changes, or merge PRs.
+it does not edit files, commit, push, submit a GitHub approval or change request,
+or merge PRs. After a full review or verification, it applies the
+`dev-bot-review-approved` workflow label only when the verified finding ledger
+has no open findings; a new full review clears that label first.
 
 ## Configuration files
 
@@ -31,6 +34,12 @@ not. The current value is `dev-bot-review`. The Fabric Access
 `dev-bot-coordinator` reads this value and applies it to implementation PRs
 after they open. This is distinct from the deployment variable `BOT_LABEL`,
 which labels the bot runner and is not used to select PRs.
+
+The bot also manages `dev-bot-review-approved` as a workflow signal. It adds
+the label after a full review or verification when the verified ledger is empty
+or every finding is addressed, and removes it when open findings remain. A new
+full review clears a prior approval label before model work. This is not a
+GitHub review vote; repository branch rules still enforce human approval.
 
 Each key under `repositories` should match a key in `project-repos.json`. For
 example, `insights-rbac` refers to
@@ -92,7 +101,8 @@ The per-repository settings are:
   selected skills define the detailed inline layout for findings attributed to
   them and must complete for publication. Other findings use the standard
   inline layout. Both formats use the same status summary template: a short
-  PR-purpose sentence, a Findings table with inline-thread links, and commands
+  PR-purpose sentence, affected-area bullets derived from the pinned diff, a
+  Change risk section, a Findings table with inline-thread links, and commands
   for contextual answers, re-review, and verification.
 - **`jira`** (optional): Its presence enables Jira follow-up for that review
   repository. `team_field` is the Jira Team custom-field key; each profile maps
@@ -141,9 +151,10 @@ Write comments for developers working on this project: direct, technically
 precise, and easy to scan. Use short sentences and standard terminology. This
 applies to status comments, inline findings, context questions, and answer
 follow-ups. The status comment has a short description of what the PR changes,
-a Change risk section with the assessed level and rationale,
-then a Findings heading with counts and a table of plain-text finding IDs,
-severity, dimension, resolution state, and separate inline-comment links. It
+affected-area bullets derived from the pinned diff, a Change risk section with
+the assessed level and rationale, then a Findings heading with counts and a
+table of plain-text finding IDs, severity, dimension, resolution state, and
+separate inline-comment links. It
 ends with contextual-answer, learning-extraction, re-review, and verification
 commands.
 Detailed scenarios, evidence, and fixes belong in the inline comments.
@@ -214,6 +225,19 @@ level, the bot uses that preset:
 The workflow may pass `--level <name>` to override the catalog default for a
 run. The default can also be changed in `dimensions.yaml`.
 
+The catalog also defines `package_upgrade_profile`. A dependency-manifest-only
+diff selects just `package-upgrades` and the existing
+`cross-repo-dependencies` dimension, plus any repository-required skills. The
+package reviewer checks application compatibility and evidence-backed CVE
+claims; the cross-repository pass checks declared consumers. Mixed diffs keep
+the ordinary applicable dimensions and add both package passes. Explicit
+focused runs keep their requested selection. The full-review risk assessor,
+missing-context detector, and verifier still run, so the reduced cost comes
+from fewer dimension workers while preserving the standard review pipeline.
+Both package-specific passes must complete before a clean result or the
+`dev-bot-review-approved` label can be published; a failed pass leaves the task
+retryable instead of treating the remaining pass as sufficient.
+
 ### Dimension entries
 
 Each item under `dimensions` describes one review pass. Common fields are:
@@ -243,11 +267,11 @@ Each item under `dimensions` describes one review pass. Common fields are:
   [OpenCode deployment config](https://github.com/RedHatInsights/fabric-access-ai-dev/blob/main/instance/rbac-config-review/opencode-deployment.json).
   Terra is the default for orchestration and missing preferences. Luna remains
   assigned to focused dimensions, while Terra handles broad or high-judgment
-  dimensions. The current assignments are: correctness,
-  architecture, security, concurrency, database schema, and cross-repository
-  dependencies use Terra; code quality, documentation, observability,
-  performance, error handling, test quality, API contract, database queries,
-  integrations, vulnerability, Go idioms, React/PatternFly, and learning
+  dimensions. The current assignments are: correctness, architecture,
+  security, concurrency, database schema, and cross-repository dependencies use
+  Terra; code quality, documentation, observability, performance, error
+  handling, test quality, API contract, database queries, integrations,
+  vulnerability, package upgrades, Go idioms, React/PatternFly, and learning
   extraction use Luna. The opt-in KISS recipe has no preference and therefore
   uses Terra.
 
@@ -305,13 +329,14 @@ flowchart TD
     Config["project-repos.json<br/>review-context.yaml<br/>dimensions.yaml"] --> Queue
     PR["GitHub PRs, label events,<br/>comments, reviews, SHAs"] --> Queue
     Memory[("bot-memory task state")] <--> Queue
-    Queue["1. Queue and authorization<br/>one eligible PR per cycle<br/>AI cost: $0"] --> Context
-    PR --> Context["2. Pin review context<br/>diff, checkout, related repos, docs<br/>AI cost: $0"]
+    Queue["1. Queue and authorization<br/>one eligible PR per cycle<br/>AI cost: $0"] --> Clear["Clear prior approval label<br/>authorized full review only<br/>AI cost: $0"]
+    Clear --> Context["2. Pin review context<br/>diff, checkout, related repos, docs<br/>AI cost: $0"]
+    Queue -->|verification, reply, or resume| Context
     Context --> Snapshot["manifest.json<br/>impact.json"]
-    Snapshot --> Select["3. Select applicable dimensions<br/>write review-plan.json<br/>AI cost: $0"]
+    Snapshot --> Select["3. Select review profile<br/>dependency-only: 2 focused passes<br/>otherwise: applicable dimensions<br/>AI cost: $0"]
     Select --> Runner["Terra review-runner<br/>one orchestration session, multiple turns"]
     Runner --> Risk["Luna risk assessor<br/>first subagent on full reviews"]
-    Risk --> Workers["4. Dimension AI passes<br/>up to 18 enabled by default, plus configured skills"]
+    Risk --> Workers["4. Dimension AI passes<br/>2 for package-only; otherwise applicable dimensions"]
     Workers --> Results["Per-dimension JSON<br/>findings + pass status"]
     Results --> Merge["5. Python merges results<br/>deduplicate + consensus rank<br/>AI cost: $0"]
     Merge --> Detector["Terra missing-context check<br/>one detect pass; more if answers arrive<br/>medium context: snapshot + pass results"]
@@ -324,13 +349,14 @@ flowchart TD
     Detector --> Publish
     Verify --> Evidence["review_evidence.py<br/>AI cost: $0"]
     Evidence --> Publish["7. Python publishers<br/>AI cost: $0"]
-    Publish --> GitHub["GitHub PR review"]
+    Publish --> GitHub["GitHub PR summary + inline comments<br/>affected-area bullets + risk label"]
+    Publish --> Approval["dev-bot-review-approved<br/>empty or fully addressed ledger"]
     Publish --> Memory
     GitHub -.->|next cycle restores ledger| Prior
 
     classDef script fill:#e2e3e5,stroke:#6c757d,color:#000;
     classDef model fill:#f8d7da,stroke:#a94442,color:#000;
-    class Queue,Context,Select,Merge,Evidence,Publish script;
+    class Queue,Clear,Context,Select,Merge,Evidence,Publish,Approval script;
     class Runner,Risk,Workers,Detector,Verify model;
 ```
 
@@ -353,6 +379,10 @@ bot-memory tracks task progress and review metadata.
 The current catalog has 18 default-enabled dimensions. Six prefer Terra and
 12 prefer Luna. Applicability determines how many run, and repositories may
 add required skills. A no-work preflight ends before the model session.
+Dependency-manifest-only PRs bypass that default dimension set and use the two
+package-focused passes (plus repository-required skills). They still use the
+standard risk, missing-context, and verification checks; mixed diffs retain the
+normal applicable dimensions and add the package checks.
 
 The largest context driver is **multiplication**: the changed code and related
 context are reused across the selected dimension calls. Long diffs, large

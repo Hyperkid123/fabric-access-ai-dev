@@ -8,7 +8,7 @@ import hashlib
 import json
 import re
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
 from impact_analysis import changed_lines
@@ -425,6 +425,81 @@ def validate_pr_summary(data: object, manifest: dict) -> str:
     return summary
 
 
+def _inline_code(value: str) -> str:
+    value = value.replace("\r", " ").replace("\n", " ")
+    ticks = max((len(match.group(0)) for match in re.finditer(r"`+", value)), default=0)
+    fence = "`" * (ticks + 1)
+    padding = " " if (value.startswith(("`", " ")) or value.endswith(("`", " "))) else ""
+    return f"{fence}{padding}{value}{padding}{fence}"
+
+
+def affected_area_lines(manifest: dict) -> list[str]:
+    """List compact, deterministic areas derived from the pinned changed paths."""
+    impact_path = manifest.get("impact_path")
+    if not isinstance(impact_path, str):
+        return ["- Changed-path details are unavailable."]
+    try:
+        impact = json.loads(Path(impact_path).read_text())
+    except (OSError, json.JSONDecodeError):
+        return ["- Changed-path details are unavailable."]
+    files = impact.get("changed_files") if isinstance(impact, dict) else None
+    if not isinstance(files, list):
+        return ["- Changed-path details are unavailable."]
+    paths = sorted({path for path in files if isinstance(path, str) and path.strip()})
+    if not paths:
+        return ["- No changed paths were found in the pinned diff."]
+
+    dependency_names = {
+        "go.mod": "Go dependencies", "go.sum": "Go dependencies",
+        "go.work": "Go dependencies", "go.work.sum": "Go dependencies",
+        "package.json": "JavaScript dependencies", "package-lock.json": "JavaScript dependencies",
+        "npm-shrinkwrap.json": "JavaScript dependencies", "yarn.lock": "JavaScript dependencies",
+        "pnpm-lock.yaml": "JavaScript dependencies", "cargo.toml": "Rust dependencies",
+        "cargo.lock": "Rust dependencies", "pipfile": "Python dependencies",
+        "pipfile.lock": "Python dependencies", "pyproject.toml": "Python dependencies",
+        "poetry.lock": "Python dependencies", "uv.lock": "Python dependencies",
+        "gemfile": "Ruby dependencies", "gemfile.lock": "Ruby dependencies",
+        "pom.xml": "JVM dependencies", "build.gradle": "JVM dependencies",
+        "build.gradle.kts": "JVM dependencies", "gradle.lockfile": "JVM dependencies",
+        "libs.versions.toml": "JVM dependencies", "packages.lock.json": ".NET dependencies",
+        "composer.json": "PHP dependencies", "composer.lock": "PHP dependencies",
+        "mix.exs": "Elixir dependencies", "mix.lock": "Elixir dependencies",
+        "pubspec.yaml": "Dart dependencies", "pubspec.lock": "Dart dependencies",
+    }
+    grouped: dict[str, list[str]] = {}
+    dependency_groups: set[str] = set()
+    for path in paths:
+        parsed = PurePosixPath(path)
+        filename = parsed.name
+        ecosystem = dependency_names.get(filename.casefold())
+        if filename.casefold().startswith("requirements") and filename.casefold().endswith(".txt"):
+            ecosystem = "Python dependencies"
+        if ecosystem:
+            parent = str(parsed.parent)
+            area = f"{parent} — {ecosystem}" if parent != "." else ecosystem
+            dependency_groups.add(area)
+            grouped.setdefault(area, []).append(filename)
+            continue
+        parent_parts = parsed.parent.parts
+        area = "/".join(parent_parts[:2]) + "/" if parent_parts else "Repository root files"
+        grouped.setdefault(area, []).append(path)
+
+    lines: list[str] = []
+    for area in sorted(grouped)[:8]:
+        items = sorted(set(grouped[area]))
+        if area in dependency_groups:
+            shown = ", ".join(_inline_code(name) for name in items[:4])
+            if len(items) > 4:
+                shown += f", and {len(items) - 4} more"
+            lines.append(f"- {_inline_code(area)}: {shown}")
+        else:
+            count = len(items)
+            lines.append(f"- {_inline_code(area)} ({count} changed {'file' if count == 1 else 'files'})")
+    if len(grouped) > 8:
+        lines.append(f"- {len(grouped) - 8} additional areas not listed.")
+    return lines
+
+
 def validate_risk_assessment(data: object, manifest: dict,
                              *, allow_stale: bool = False) -> dict:
     """Validate a classifier result and bind it to changed files and revision."""
@@ -546,6 +621,9 @@ def render_status_review(manifest: dict, findings: list[dict], review_number: in
         f"## Review {review_number}",
         "",
         summary,
+        "",
+        "### Affected areas",
+        *affected_area_lines(manifest),
         "",
         *_risk_section(risk_assessment),
         *([""] if risk_assessment else []),

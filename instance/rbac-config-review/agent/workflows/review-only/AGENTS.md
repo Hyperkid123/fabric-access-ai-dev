@@ -240,7 +240,8 @@ organization member on an existing, unpaused review task.
    `work.risk_assessment`, save that exact assessment in a cycle-local JSON
    file and pass it to the evidence gate. A risk assessment tied to an older
    head/base is shown as stale; verification does not call the risk subagent or
-   change risk labels.
+   change risk labels. It does synchronize `dev-bot-review-approved` after the
+   verified ledger is published.
 2. For every open ledger entry, compare the original claim with the current
    pinned code. Write exactly one verification using the existing
    `addressed|still_open|uncertain` schema. An `addressed` result must cite a
@@ -326,6 +327,18 @@ organization member on an existing, unpaused review task.
    Run `python3 workflows/review-only/review_comment_footer.py --repo
    <owner>/<repo> --pr <number> --review-id <review_id>` to refresh the
    shared footer on all bot comments. Keep the command pending if sync fails.
+   Then synchronize the verified-approval label:
+
+   ```
+   python3 workflows/review-only/review_approval_label.py --repo <owner>/<repo> \
+     --pr <number> --head-sha <head_sha> --base-sha <base_sha> \
+     --mode sync --ledger <verified-ledger.json>
+   ```
+
+   The script adds `dev-bot-review-approved` only when the ledger is empty or
+   every finding is verifier-confirmed as addressed; otherwise it removes that
+   label. If the script fails, keep the command pending and retry it before
+   clearing `pending_verification`.
 6. After all replies succeed, set
    the task back to `pr_open`, clear `pending_verification` and
    `pending_publication`, and merge command IDs into
@@ -364,6 +377,18 @@ for an initial publication, a uniquely matching bot review) has exactly the
 pending publication's body. If so, recover its review ID and retain the pending ledger and
 counter before reviewing the new pair. Otherwise discard the unpublished
 artifacts. Keep uncompleted command IDs for the new cycle.
+
+For a new full review only, clear any prior `dev-bot-review-approved` label
+after the authorization and resume checks succeed and before context building:
+
+```
+python3 workflows/review-only/review_approval_label.py --repo <owner>/<repo> \
+  --pr <number> --head-sha <head_sha> --base-sha <base_sha> --mode clear
+```
+
+Do not clear it during verification, feedback replies, or a resumed pending
+publication. If clearing fails, stop before model work and leave the review
+retryable.
 
 1. Run:
    python3 data/remote-config/instance/rbac-config-review/agent/workflows/review-only/build_context.py --repo-key <repo_key> --pr <number> --head-sha <head_sha> --base-sha <base_sha>
@@ -478,6 +503,13 @@ artifacts. Keep uncompleted command IDs for the new cycle.
 
    Record skipped or failed passes and their reasons in task state. If no
    pass completes, stop without publishing a clean review.
+   When `review_plan.profile` is `package-upgrade` or
+   `mixed-package-upgrade`, require completed results from both
+   `package-upgrades` and `cross-repo-dependencies`. If either pass fails or
+   returns invalid output, stop without publishing a clean review or adding
+   `dev-bot-review-approved`; keep the task retryable and report the failed
+   pass. This keeps a clean package-upgrade result from being inferred from
+   only one of its two required checks.
    When `manifest.format` is `custom`, persist each completed pass named in
    `manifest.format_skills` as the pass's own JSON result in a cycle-specific
    `skill-results.json`: `{"results":[<per-pass JSON objects>]}`. Every
@@ -617,7 +649,9 @@ artifacts. Keep uncompleted command IDs for the new cycle.
 
    For `manifest.format == "standard"`, use the generated publication JSON and
    inline comments. The status summary has a `Review N` heading (without `#N`),
-   the one-sentence `pr_summary`, and a `Findings` table with plain-text IDs,
+   the one-sentence `pr_summary`, an `Affected areas` section with concise
+   bullets derived from the pinned changed paths, and a `Findings` table with
+   plain-text IDs,
    severity, dimension, resolution state, and a separate link to each inline
    thread. Keep finding details in the inline comments. The table and help
    footer use the fixed workflow template. `manifest.format == "custom"` uses
@@ -754,8 +788,9 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    request changes, or post a second summary when a tracked review exists. Read
    `review_id` and `review_url` from its JSON output, then save them in task
    metadata. Keep `pending_publication` until findings, context comments,
-   summary, and risk label are all published so a retry reuses the same validated payload and
-   count. GitHub may create separate review records for inline comments; keep
+   summary, risk label, and verified-approval label are all synchronized so a
+   retry reuses the same validated payload and count. GitHub may create
+   separate review records for inline comments; keep
    tracking the summary review's ID.
    Run `python3 workflows/review-only/review_comment_footer.py --repo
    <owner>/<repo> --pr <number> --review-id <review_id>` after the status
@@ -768,6 +803,13 @@ artifacts. Keep uncompleted command IDs for the new cycle.
    creates or updates the selected label description, applies exactly one risk
    label, and removes the other two. Keep the task in progress and retain the
    pending publication if label application fails; retries are idempotent.
+   Finally run `python3 workflows/review-only/review_approval_label.py --repo
+   <owner>/<repo> --pr <number> --head-sha <head_sha> --base-sha <base_sha>
+   --mode sync --ledger <ledger.json>`. It adds the approval label only when
+   there are no findings or every finding is already marked addressed by the
+   evidence and verifier pipeline; otherwise it removes the label. Keep the
+   task in progress and retain the pending publication if this synchronization
+   fails. This label is not a GitHub `APPROVE` review event.
    Every published summary and inline comment must carry the hidden marker
    `<!-- dev-review-bot:... -->`. The status summary also carries one
    `dev-review-bot:review-ledger:v1` payload. It contains only resume fields
