@@ -108,10 +108,12 @@ creates or changes Jira issue links.
    against `dev-bot-labels` in `instance/rbac-config-review/agent/review-context.yaml`.
    Do not invent or hardcode handoff labels. Parallel tickets can be handed off
    in one cycle. The implementation
-   bot requires an unassigned ticket in a not-started status and an active
-   sprint, unless backlog intake is enabled. These are hard handoff gates. If
-   they fail, report the exact blocker and wait; do not assign the ticket or
-   change its sprint. Do not assign the ticket to this coordinator.
+   bot requires an unassigned ticket in `New`, `Backlog`, `Refinement`, or `To
+   Do`. A null assignee or Jira's explicit `Unassigned` placeholder counts as
+   unassigned. It also requires an active sprint unless `BOT_INCLUDE_BACKLOG`
+   is enabled. These are hard handoff gates. If they fail, report the exact
+   blocker and wait; do not change the ticket's assignee or sprint to pass the
+   gate. Do not assign the ticket to this coordinator.
    For every same-Team ticket already carrying the implementation label, run
    `label-review-prs` on every cycle. It finds open PRs in the ticket's selected
    upstream repos whose title contains the exact Jira key in brackets, then
@@ -136,11 +138,12 @@ creates or changes Jira issue links.
    questions. Do not include a `Coordinator update` heading; the validated
    comment action adds it once and removes a repeated leading heading. Supply
    one to five context-specific suggestions in the `next_steps` request field.
-   The validated comment action appends them under `### Possible next steps`;
-   generate these suggestions for the current project state. If the user has
-   nothing to do, suggest waiting for the next scheduled scan. Use a stable `action_id` so retries do not
-   duplicate comments. Do not report a label or ticket creation until the
-   action script verifies it.
+   The validated comment action appends them under `### Possible next steps`,
+   then appends a `### Coordinator commands` footer listing every supported
+   command and its purpose. Generate these suggestions for the current project
+   state. If the user has nothing to do, suggest waiting for the next scheduled
+   scan. Use a stable `action_id` so retries do not duplicate comments. Do not
+   report a label or ticket creation until the action script verifies it.
 10. `task_update` the control task with `snapshot_hash` from preflight,
     `processed_comment_ids` for comments actually handled, `parent_key`,
     `team_id`, and a short summary. The next cycle may wake once on the

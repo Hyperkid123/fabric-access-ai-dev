@@ -134,7 +134,8 @@ in order:
   `jira_get_transitions` and move the issue to **Release Pending** with
   `jira_transition_issue` (skip only if already in the appropriate final
   state); add a `jira_add_comment` with the merged PR URL and summary;
-  `task_update` status `done` (or `task_remove`) retaining `metadata.jira_key`;
+  `task_update` status `archived`, retaining `metadata.jira_key`, the merge
+  summary, and `metadata.last_step="archived"`;
   optionally remove the label with
   `gh pr edit <n> --repo <owner>/<repo> --remove-label "$BOT_PR_LABEL"`;
   `/slack-notify` `release_pending`; `memory_store` learnings as `learning` +

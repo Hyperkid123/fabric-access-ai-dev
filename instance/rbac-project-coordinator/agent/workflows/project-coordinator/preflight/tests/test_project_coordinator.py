@@ -37,7 +37,7 @@ def issue(key: str, *, parent: str | None = "RHCLOUD-100", team: str = TEAM_ID, 
             TEAM_FIELD: {"id": team},
             "issuelinks": list(links or []),
             "assignee": None,
-            "customfield_10020": [{"id": 1}],
+            "customfield_10020": [{"id": 1, "state": "active"}],
         },
     }
     if parent:
@@ -183,18 +183,23 @@ def test_handoff_rechecks_team(jira_store):
     assert len(writes) == write_count
 
 
-def test_handoff_waits_for_unassigned_ticket_and_sprint_or_backlog(jira_store):
+def test_handoff_recognizes_unassigned_placeholder_and_requires_active_sprint(jira_store):
     store, writes = jira_store
     child = store["RHCLOUD-102"]
     request = {"control_key": "RHCLOUD-101", "ticket_key": "RHCLOUD-102", "repos": ["rbac-config"]}
     child["fields"]["assignee"] = {"name": "someone"}
     with pytest.raises(ValueError, match="not unassigned"):
         actions.handoff(request, CONFIG)
-    child["fields"]["assignee"] = None
+    child["fields"]["assignee"] = {"displayName": "Unassigned"}
     child["fields"]["customfield_10020"] = None
     with pytest.raises(ValueError, match="outside the active sprint"):
         actions.handoff(request, CONFIG)
-    assert not any(name == "jira_update_issue" for name, _ in writes)
+
+    child["fields"]["customfield_10020"] = [{"id": 1, "state": "ACTIVE"}]
+    result = actions.handoff(request, CONFIG)
+    assert result["ticket_key"] == "RHCLOUD-102"
+    assert child["fields"]["assignee"] == {"displayName": "Unassigned"}
+    assert any(name == "jira_update_issue" for name, _ in writes)
 
 
 def test_approved_setup_applies_repo_and_phase_labels_without_issue_links(jira_store, monkeypatch):
@@ -355,7 +360,6 @@ def test_preflight_bootstrap_then_skips_unchanged_and_wakes_on_completion(monkey
     monkeypatch.setenv("BOT_LABEL", CONFIG[0])
     monkeypatch.setenv("BOT_TEAM_FIELD_ID", TEAM_FIELD)
     monkeypatch.setenv("BOT_IMPLEMENTATION_LABEL", CONFIG[2])
-    monkeypatch.setenv("BOT_INCLUDE_BACKLOG", "false")
 
     coordinator.main()
     assert outputs[-1][0] == "start"
@@ -395,7 +399,7 @@ def test_coordinator_comment_appends_dynamic_next_steps_footer(jira_store):
             "body": "Phase 1 has two runnable tickets.",
             "next_steps": [
                 "Confirm the insights-rbac repo choice.",
-                "Add the missing assignee and active sprint before handoff.",
+                "Add the missing assignee before handoff.",
             ],
         },
         CONFIG,
@@ -404,7 +408,7 @@ def test_coordinator_comment_appends_dynamic_next_steps_footer(jira_store):
     assert result["commented"] is True
     assert "### Possible next steps" in comment
     assert "- Confirm the insights-rbac repo choice." in comment
-    assert "- Add the missing assignee and active sprint before handoff." in comment
+    assert "- Add the missing assignee before handoff." in comment
 
 
 def test_coordinator_comment_requires_footer_suggestions(jira_store):
