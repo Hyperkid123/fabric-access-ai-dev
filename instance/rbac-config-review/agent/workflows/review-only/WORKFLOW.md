@@ -3,12 +3,15 @@
 `rbac-config-review` is a separate, review-only Rehor bot instance (not yet
 deployed). Each cycle it reviews at most one GitHub PR labeled in
 `review-context.yaml`, across the repositories in `project-repos.json`. It
-never edits, commits, pushes, approves, requests changes, or merges — it keeps
-one GitHub review summary per PR and edits it in place each cycle. It also
+never edits, commits, pushes, submits a GitHub approval or change request, or
+merges — it keeps one GitHub review summary per PR and edits it in place each
+cycle. It can add `dev-bot-review-approved` as a workflow label after the
+verified ledger has no open findings; it does not submit an `APPROVE` review.
+It also
 posts one idempotent inline thread per actionable finding, using the same
 finding ID in the summary and inline comment. The summary has a one-sentence
-purpose statement, a revision-specific Change risk section, and a Findings
-table with plain-text IDs, severity, dimension, resolution state, and a
+purpose statement, affected-area bullets from the pinned diff, a
+revision-specific Change risk section, and a Findings table with plain-text IDs, severity, dimension, resolution state, and a
 separate link to each inline thread.
 Scenario steps and their expected and actual results, evidence, and fixes stay
 in the inline comments. The summary ends
@@ -31,26 +34,34 @@ flowchart LR
     GH1["GitHub PR"] --> A
     Memory[("bot-memory")] <--> A
     subgraph Cycle["one cycle, at most one PR"]
-        A["Preflight<br/>(review_queue.py)"] --> B["Context<br/>(build_context.py)"]
-        B --> R["Classify risk first<br/>(review-risk-assessor)"]
-        R --> C["Review<br/>(Terra/Luna by dimension)"]
+        A["Preflight<br/>(review_queue.py)"] -->|authorized full review| X["Clear prior approval label<br/>(review_approval_label.py)"]
+        A -->|other review work| B["Context<br/>(build_context.py)"]
+        X --> B
+        B --> P["Select review profile<br/>(review_skills.py)"]
+        P --> R["Classify risk first<br/>(review-risk-assessor)"]
+        R --> C["Review<br/>(package-only: two focused passes;<br/>otherwise applicable dimensions)"]
         C --> M["Check missing context<br/>(missing-context-detector)"]
         M --> D["Verify<br/>(review-verifier)"]
-        D --> E["Publish<br/>(comments, summary, risk label)"]
+        D --> E["Publish<br/>(comments, summary, risk + approval labels)"]
     end
-    E --> GH2["GitHub review summary + inline threads + one risk label"]
+    E --> GH2["GitHub review summary + inline threads + risk label"]
+    E --> GH3["dev-bot-review-approved<br/>empty or fully addressed ledger only"]
     E -.-> Memory
 
     classDef script fill:#e2e3e5,stroke:#6c757d,color:#000;
     classDef ai fill:#f8d7da,stroke:#a94442,color:#000;
-    class A,B,E script;
+    class A,B,E,P,X script;
     class C,M,D,R ai;
 ```
 
 Gray = deterministic script, $0, no model call. Red = an LLM reasons over
 pinned context and can be wrong. `R`, `C`, `M`, and `D` spend tokens during a
-review; `A`, `B`, and `E` are plain Python. Preflight checks comments before a
-feedback cycle so bot-authored updates alone do not start a model session.
+review; `A`, `B`, `E`, `P`, and `X` are plain Python. Dependency-only changes
+use `package-upgrades` and `cross-repo-dependencies`; mixed changes retain the
+normal applicable dimensions and add both package checks. The risk assessor,
+missing-context detector, and verifier remain part of the review. Preflight
+checks comments before a feedback cycle so bot-authored updates alone do not
+start a model session.
 
 | Piece | File | Script or AI | Role |
 |---|---|---|---|
@@ -58,6 +69,7 @@ feedback cycle so bot-authored updates alone do not start a model session.
 | Config validation | `review_config.py` | Script | Loads and strictly validates `review-context.yaml` (GitHub URL shape, `.md`-only doc links, unique ids) |
 | Context builder | `build_context.py` | Script | Checks out the PR head read-only, clones related repos at a pinned SHA, fetches configured Markdown docs at a pinned commit, writes `manifest.json` |
 | Skill preparation | `review_skills.py` | Script | Selects dimensions, reads selected recipe YAML at a pinned commit, and generates per-run review skills |
+| Package upgrade profile | `dimensions.yaml` + `review_skills.py` | Script | Routes dependency-manifest-only diffs to `package-upgrades` plus the existing `cross-repo-dependencies` pass; mixed diffs keep normal coverage and add both |
 | Impact analysis | `impact_analysis.py` | Script | Deterministically (no LLM) extracts changed identifiers from the diff and `git grep`-matches them in related repos → `impact.json`'s `consumer_usages` (candidates, not confirmed breakage) |
 | PR command detection | `rereview_requests.py`, `review_bot_commands.py`, `review_queue.py` | Script | Finds exact verification/re-review commands and new `/review-bot` requests in top-level comments, inline threads, and submitted review bodies; the runner answers generic requests from pinned context after organization-membership checks |
 | Jira issue creation | `.opencode/agents/jira-ticket-creator.md`, `jira_config.py` | **AI** (subagent) + script | Handles an explicit Jira request or an authorized cross-repo follow-up using the target repository's App Interface profile and an idempotency marker |
@@ -71,7 +83,9 @@ feedback cycle so bot-authored updates alone do not start a model session.
 | Explanation quality | `skills/explanatory-answer/SKILL.md` | **AI** (review-runner) | General guidance for direct answers, causal reasoning, evidence, and requested Mermaid diagrams; this workflow maps it to finding fields |
 | Verifier | `.opencode/agents/review-verifier.md` | **AI** (subagent) | Independently tries to refute every proposed finding using only pinned sources |
 | Evidence gate | `review_evidence.py` | Script | Rejects findings without real pinned locations/references; caps at seven; requires one verdict per finding; renders the status template |
+| Affected-area summary | `review_evidence.py` | Script | Adds concise bullets derived from pinned changed paths to each status review |
 | Risk label publisher | `review_risk_label.py` | Script | Rechecks PR SHAs, applies exactly one risk label, and removes conflicting risk labels |
+| Verified approval label | `review_approval_label.py` | Script | Clears `dev-bot-review-approved` before a new full review; synchronizes it after full review or verification only when the ledger is empty or every finding is addressed |
 | Review ledger transport | `review_ledger.py`, `review_queue.py`, `post_review.py` | Script | Embeds a public-safe ledger in the status review and restores it from GitHub before a model session |
 | Pending publication persistence | `persist_pending_publication.py` | Script | Reads the prepared body from disk, stores it through Bot Memory MCP, and verifies the exact body and revision in task state |
 | Inline publisher | `post_inline_comments.py` | Script | Posts or updates one anchored comment per confirmed finding on the current PR head, deduplicated by finding ID |
@@ -100,6 +114,20 @@ The high preset remains the default. For a documentation-only diff, dimensions
 marked `skip_documentation_only` do not run. Mixed code and documentation
 changes still select the full applicable set, and an explicitly selected skill
 always runs.
+
+Dependency-manifest-only changes use the `package_upgrade_profile` instead of
+the high preset: only `package-upgrades` and `cross-repo-dependencies` run,
+plus any repository-required skills. This keeps package-only updates focused
+while checking runtime/API compatibility, evidence-backed CVE claims, and
+declared cross-repository consumers. Mixed code and dependency changes keep
+the normal applicable dimensions and add both package passes. Explicit
+`--focus` runs retain their requested selection. The risk assessor,
+missing-context detector, and verifier continue as part of the full-review
+flow.
+Both package-specific passes must complete before the bot can publish a clean
+result or add `dev-bot-review-approved`. If either pass fails or returns
+invalid output, leave the task retryable and report the failed pass; do not
+treat one pass's empty findings as a clean package review.
 
 Each repository can list dimension names in `review-context.yaml` under
 `repositories.<repo-key>.skills`. These skills always run for that repository,
@@ -339,7 +367,8 @@ sequenceDiagram
     Q->>R: one PR (review / resume / feedback_check / lifecycle-only)
     Note over Q,R: skipped entirely if no PR needs attention
     rect rgb(226, 227, 229)
-        R->>R: build_context.py → manifest.json + impact.json
+        R->>GH: review_approval_label.py --mode clear (authorized new full review only)
+        R->>R: build_context.py → manifest + impact + review plan (package profile or normal dimensions)
     end
     rect rgb(248, 215, 218)
         loop Batches of up to four dimensions
@@ -359,10 +388,11 @@ sequenceDiagram
         V->>R: verdicts.json (confirmed/refuted/uncertain)
     end
     rect rgb(226, 227, 229)
-        R->>R: review_evidence.py → compact publication + inline/context comments + ledger
+        R->>R: review_evidence.py → affected-area bullets + publication + inline/context comments + ledger
     end
     R->>GH: post/update inline threads and context questions
     R->>GH: create/update one status summary with a Findings table and inline links
+    R->>GH: synchronize dev-bot-review-approved only when ledger has no open findings
     R->>Q: task_update (status=pr_open, reviewed SHA, review_id, update_count)
 ```
 

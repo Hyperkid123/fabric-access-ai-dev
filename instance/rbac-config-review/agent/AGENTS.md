@@ -8,12 +8,15 @@ Use a unique BOT_INSTANCE_ID and only tasks whose external key starts with
 review-only:github:. Pass source_type="github" for task lookups and writes.
 Pass instance_id to task creation, listing, capacity, and status calls.
 
-The bot may post GitHub review comments and manage only the
+The bot may post GitHub review comments and manage the
 `dev-bot-review-waiting-for-approval` label while review approval is pending,
-plus exactly one of `low-risk`, `medium-risk`, or `high-risk` after a full
-review. Risk labels describe merge guidance; repository branch rules remain
-the enforcement point for human approvals. It must never edit files, commit,
-push, approve, request changes, merge, or change other PR labels. It may create a Jira issue after a verified organization member asks in natural language, or
+the `dev-bot-review-approved` label only when the verified ledger has no open
+findings, and exactly one of `low-risk`, `medium-risk`, or `high-risk` after a
+full review. The approved label is a workflow signal, not a GitHub review
+vote; repository branch rules remain the enforcement point for human approvals.
+The bot must never edit files, commit, push, submit an `APPROVE` or
+`REQUEST_CHANGES` review, merge, or change unrelated PR labels. It may create a
+Jira issue after a verified organization member asks in natural language, or
 automatically for a verifier-confirmed cross-repository finding with exactly
 one configured related-repository owner. Use the repo/team profile and
 `jira-ticket-creator` subagent. Never update existing Jira issues.

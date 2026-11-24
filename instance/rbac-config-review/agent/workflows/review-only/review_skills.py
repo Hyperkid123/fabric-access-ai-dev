@@ -211,6 +211,32 @@ def model_route(item: dict, catalog: dict) -> dict:
     return {"model_preference": preference, "review_agent": agent}
 
 
+def package_review_profile(catalog: dict, changed_files: list[str],
+                          focus: list[str] | None) -> tuple[str, list[str]]:
+    """Route dependency-only diffs through the compact package review profile."""
+    if focus is not None:
+        return "standard", []
+    config = catalog.get("package_upgrade_profile")
+    if not isinstance(config, dict):
+        raise SkillError("dimensions.yaml package_upgrade_profile must be a mapping")
+    patterns = config.get("file_patterns")
+    dimensions = config.get("dimensions")
+    if (not isinstance(patterns, list) or not patterns
+            or any(not isinstance(pattern, str) for pattern in patterns)
+            or not isinstance(dimensions, list) or not dimensions
+            or any(not isinstance(name, str) for name in dimensions)):
+        raise SkillError("Invalid package upgrade profile")
+    package_files = [
+        path for path in changed_files
+        if any(_matches(pattern, path) for pattern in patterns)
+    ]
+    if not package_files:
+        return "standard", []
+    if len(package_files) == len(changed_files):
+        return "package-upgrade", dimensions
+    return "mixed-package-upgrade", dimensions
+
+
 def prepare(manifest: dict, config: dict, output_dir: Path, focus: list[str] | None = None,
             level: str | None = None) -> dict:
     catalog = yaml.safe_load((SKILL_DIR / "dimensions.yaml").read_text())
@@ -225,7 +251,14 @@ def prepare(manifest: dict, config: dict, output_dir: Path, focus: list[str] | N
     changed = json.loads(Path(manifest["impact_path"]).read_text())["changed_files"]
     repo_key = manifest["pr"].get("repo_key")
     required = config.get("repositories", {}).get(repo_key, {}).get("skills", [])
-    selected = select(catalog, changed, chosen_level, focus, required)
+    profile, package_dimensions = package_review_profile(catalog, changed, focus)
+    selection_focus = focus
+    selection_required = required
+    if package_dimensions:
+        selection_required = list(dict.fromkeys([*required, *package_dimensions]))
+        if profile == "package-upgrade":
+            selection_focus = package_dimensions
+    selected = select(catalog, changed, chosen_level, selection_focus, selection_required)
     routed = [(item, model_route(item, catalog)) for item in selected]
     revisions: dict[tuple[str, str], str] = {}
     passes = []
@@ -242,7 +275,7 @@ def prepare(manifest: dict, config: dict, output_dir: Path, focus: list[str] | N
                        "source_skill": source.get("plugin"), "source_repo": source.get("repo"),
                        **route})
     output_dir.mkdir(parents=True, exist_ok=True)
-    plan = {"mode": "dimensions", "level": chosen_level,
+    plan = {"mode": "dimensions", "profile": profile, "level": chosen_level,
             "default_model_preference": default_preference, "passes": passes,
             "merge": {key: catalog_config[key] for key in (
                 "dedup_jaccard", "dedup_line_range", "consensus_threshold",
