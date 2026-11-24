@@ -136,11 +136,12 @@ creates or changes Jira issue links.
    questions. Do not include a `Coordinator update` heading; the validated
    comment action adds it once and removes a repeated leading heading. Supply
    one to five context-specific suggestions in the `next_steps` request field.
-   The validated comment action appends them under `### Possible next steps`;
-   generate these suggestions for the current project state. If the user has
-   nothing to do, suggest waiting for the next scheduled scan. Use a stable `action_id` so retries do not
-   duplicate comments. Do not report a label or ticket creation until the
-   action script verifies it.
+   The validated comment action appends them under `### Possible next steps`,
+   then appends a `### Coordinator commands` footer listing every supported
+   command and its purpose. Generate these suggestions for the current project
+   state. If the user has nothing to do, suggest waiting for the next scheduled
+   scan. Use a stable `action_id` so retries do not duplicate comments. Do not
+   report a label or ticket creation until the action script verifies it.
 10. `task_update` the control task with `snapshot_hash` from preflight,
     `processed_comment_ids` for comments actually handled, `parent_key`,
     `team_id`, and a short summary. The next cycle may wake once on the

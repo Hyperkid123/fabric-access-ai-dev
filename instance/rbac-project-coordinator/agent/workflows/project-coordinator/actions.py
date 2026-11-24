@@ -47,6 +47,12 @@ ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 LABEL_RE = re.compile(r"^[A-Za-z0-9:_-]+$")
 SETUP_PROPOSAL_RE = re.compile(r"```(?:[A-Za-z0-9_-]+)?\s*(.*?)\s*```", re.DOTALL)
 SETUP_APPROVAL_RE = re.compile(r"\b(?:approve|approved)\b", re.IGNORECASE)
+COMMAND_HELP_FOOTER = """### Coordinator commands
+- `approve` / `approved` (or `/coord approve setup`) — approve the latest setup proposal.
+- `/coord start` — recheck the plan and release currently runnable tickets.
+- `/coord status` — request a fresh project status.
+- `/coord create P-<number>` — create a ticket proposed in an earlier coordinator comment.
+- `/coord complete project` — confirm project completion after all planned tickets are complete."""
 
 
 def require_config() -> tuple[str, str, str]:
@@ -581,7 +587,7 @@ def comment_control(request: dict, config: tuple[str, str, str]) -> dict:
     if any(marker in comment_body(item) for item in comments(control)):
         return {"control_key": key_of(control), "commented": False, "action_id": action_id}
     footer = "### Possible next steps\n" + "\n".join(f"- {step.strip()}" for step in next_steps)
-    comment = f"{OWN_COMMENT_PREFIX}\n\n{body}\n\n{footer}\n\n{marker}"
+    comment = f"{OWN_COMMENT_PREFIX}\n\n{body}\n\n{footer}\n\n{COMMAND_HELP_FOOTER}\n\n{marker}"
     call_write("jira_add_comment", {"issue_key": key_of(control), "comment": comment})
     return {"control_key": key_of(control), "commented": True, "action_id": action_id}
 
