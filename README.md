@@ -87,6 +87,7 @@ Deploy another bot target using `deploy/template.yaml` or
 | `BOT_IMPLEMENTATION_LABEL` | The implementation bot's actual Jira label, currently `hcc-ai-platform-accessmanagement` |
 | `BOT_JIRA_PROJECT` | `RHCLOUD` |
 | `BOT_TEAM_FIELD_ID` | Jira's Team custom field key: `customfield_10001` (also used by this instance's review profiles) |
+| `BOT_INCLUDE_BACKLOG` | Match the implementation bot's backlog setting; if `false`, runnable tickets need an active sprint |
 | `BOT_EXECUTION_ENGINE` | `coordinator` (the runner uses OpenCode for this workflow) |
 | `REHOR_OPENCODE_DEPLOYMENT_CONFIG` | `/home/botuser/app/instance/rbac-project-coordinator/opencode-deployment.json` |
 
@@ -116,11 +117,10 @@ coordinator run:
    control ticket and phase labels to implementation tickets. It does not
    create or change Jira issue links.
 5. **Make first handoffs possible.** Tickets ready for handoff must be
-   unassigned and in `New`, `Backlog`, `Refinement`, or `To Do`. Sprint
-   membership does not matter; the coordinator hands off eligible tickets
-   regardless of sprint. The coordinator chooses each ticket's repo from the
-   control ticket's allowlist; make the ticket scope clear enough to identify
-   the right repo.
+   unassigned and in `New`, `Backlog`, `Refinement`, or `To Do`. They need an
+   active sprint unless `BOT_INCLUDE_BACKLOG` is enabled. The coordinator
+   chooses each ticket's repo from the control ticket's allowlist; make the
+   ticket scope clear enough to identify the right repo.
 
 On first enrollment, the coordinator analyzes all same-Team implementation
 tickets and posts a proposed order, phase suggestions, dependencies, parallel
@@ -183,11 +183,11 @@ flowchart TD
 
 | Step | Inputs | What happens |
 |---|---|---|
-| 1. Scan | Project, control label, Team field key, repo allowlist, and saved memory snapshot. | Finds control tickets and their parent issues. Reads each control ticket's Team ID and includes only direct children with that same ID. |
-| 2. Detect change | Parent and control details; same-Team child status, labels, links, ownership, and human control comments. | Skips unchanged projects. Starts a cycle for a first run, changed project, or missing state label. |
+| 1. Scan | Project, control label, Team field key, repo allowlist, backlog setting, and saved memory snapshot. | Finds control tickets and their parent issues. Reads each control ticket's Team ID and includes only direct children with that same ID. |
+| 2. Detect change | Parent and control details; same-Team child status, labels, links, ownership, sprint, and human control comments. | Skips unchanged projects. Starts a cycle for a first run, changed project, or missing state label. |
 | 3. Review | Changed project payload: ticket keys, phases, statuses, dependencies, gaps, ready/waiting tickets, allowed repos, and new comments. | Coordinator rereads relevant Jira tickets, answers setup questions, and proposes a repo and phases. |
 | 4. Approve setup | The latest proposal and the user's approval comment. | One approval lets the validated action add the control repo allowlist and implementation phase labels. It does not create or change Jira issue links. |
-| 5. Check readiness | Approved setup, acceptance criteria, ticket assignees/statuses. | Waits and reports any gaps. It hands off unassigned tickets in `New`, `Backlog`, `Refinement`, or `To Do`, regardless of sprint. |
+| 5. Check readiness | Approved setup, acceptance criteria, ticket assignees/statuses, active sprint or backlog setting. | Waits and reports any gaps. It hands off only unassigned, not-started tickets that also meet the sprint/backlog requirement. |
 | 6. Act and save | Ready ticket and latest Jira state. | Validated actions add the selected repo and implementation labels to ready tickets, then hand off the work. Saves the snapshot and handled comment IDs for the next scan. |
 
 On the control ticket, users can request:

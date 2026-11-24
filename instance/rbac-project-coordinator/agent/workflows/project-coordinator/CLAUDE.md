@@ -109,9 +109,11 @@ creates or changes Jira issue links.
    Do not invent or hardcode handoff labels. Parallel tickets can be handed off
    in one cycle. The implementation
    bot requires an unassigned ticket in `New`, `Backlog`, `Refinement`, or `To
-   Do`. Sprint membership does not affect handoff; release eligible tickets
-   regardless of sprint. If assignment or status fails, report the exact
-   blocker and wait. Do not assign the ticket to this coordinator.
+   Do`. A null assignee or Jira's explicit `Unassigned` placeholder counts as
+   unassigned. It also requires an active sprint unless `BOT_INCLUDE_BACKLOG`
+   is enabled. These are hard handoff gates. If they fail, report the exact
+   blocker and wait; do not change the ticket's assignee or sprint to pass the
+   gate. Do not assign the ticket to this coordinator.
    For every same-Team ticket already carrying the implementation label, run
    `label-review-prs` on every cycle. It finds open PRs in the ticket's selected
    upstream repos whose title contains the exact Jira key in brackets, then
