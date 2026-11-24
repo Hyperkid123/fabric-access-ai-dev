@@ -15,8 +15,8 @@ The key must match `[PROJECT-12345]` (uppercase project key and numeric issue ke
 - If the title already contains a Jira key, use that issue and save it as task metadata `jira_key`.
 - If it does not, create one Jira Task that accurately reflects the PR's actual changes. Use `$BOT_JIRA_PROJECT` when set; otherwise use `RHCLOUD` for this instance. Include the PR URL, original title/body, changed files, and a concise implementation summary in the description.
 - Whenever this workflow creates a Jira issue, set its **Team** field to **Console Access** in the `jira_create_issue` call. Resolve the Team custom-field ID and required value format from Jira field options or an existing issue, then include it in the `additional_fields` JSON. If needed, find an existing RHCLOUD issue with Team = Console Access using `jira_search`, inspect it with `jira_get_issue(fields="*all")`, and reuse the Team custom-field key and value shape; confirm the option with `jira_get_field_options` when available. Preserve any other required `additional_fields` (such as a parent or epic link). Do not create the issue without the Team value; if it cannot be set, report the blocker.
-- Before creating a ticket, capture the PR author's GitHub login from the PR data (for example, `gh pr view --json author`). After `jira_create_issue` succeeds, make a best-effort assignment attempt with `jira_update_issue`, passing `fields='{"assignee":"<PR_AUTHOR_LOGIN>"}'`. Do not assign the ticket to the bot. A missing login or Jira rejection is non-fatal: leave the ticket unassigned, record the failed attempt in the task summary/PR reply, and continue.
-- After Jira creation and the assignment attempt, update the PR title with `gh pr edit` so the new key is present in square brackets. Do not create a second ticket on later cycles; first check the task metadata and current PR title.
+- Leave newly created Jira issues unassigned. Do not assign them to the PR author or bot, and do not call `jira_update_issue` for assignment.
+- After Jira creation, update the PR title with `gh pr edit` so the new key is present in square brackets. Do not create a second ticket on later cycles; first check the task metadata and current PR title.
 - Reply on the PR with the created key and Jira URL, then continue normal PR work. Store the key with `task_update` metadata.
 
 This policy applies to both new and already-tracked PRs. A PR with a missing key is actionable work, not a reason to skip it.
@@ -113,7 +113,7 @@ Only tasks with `external_key` prefix `pr-label:`. For each `pr_open`/`pr_change
 
 **PR merged**: Do **not** invoke `/wrap-up` (that skill deletes branches and drives Jira sprint transitions). Instead:
 1. Resolve `jira_key` from task metadata or the merged PR title. If neither exists (for an older task), create the Jira Task first using the title/body/diff and add the key to the PR title.
-   Apply the same best-effort PR-author assignment step used for newly claimed PRs; an assignment failure must not block merge cleanup.
+   Leave the new Jira issue unassigned; do not assign it to the PR author or bot.
 2. Fetch the issue's transitions with `jira_get_transitions`, move it to **Release Pending** with `jira_transition_issue` (skip only if it is already in the appropriate final state), and add a `jira_add_comment` containing the merged PR URL and a short summary.
 3. `task_update` status `archived`, retaining `metadata.jira_key`, the merge summary, and `metadata.last_step="archived"`.
 4. Optionally remove the `$BOT_PR_LABEL` label: `gh pr edit <n> --repo <owner/repo> --remove-label "$BOT_PR_LABEL"`

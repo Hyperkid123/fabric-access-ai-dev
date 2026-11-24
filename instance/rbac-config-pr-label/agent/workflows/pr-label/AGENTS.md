@@ -28,10 +28,8 @@ in its title (e.g. `feat: add new feature [RHCLOUD-12345]`, matching
   custom-field ID and value shape from field options or an existing issue via
   `jira_search`/`jira_get_issue(fields="*all")`; include it in
   `additional_fields`; do not create the issue without it — report the
-  blocker if it cannot be set). Capture the PR author's login from the PR
-  data, then make a best-effort `jira_update_issue` assignment
-  (`fields='{"assignee":"<PR_AUTHOR_LOGIN>"}'`) — never assign the bot; a
-  failure is non-fatal, leave unassigned and record it.
+  blocker if it cannot be set). Leave the Jira issue unassigned. Do not set
+  its assignee or call `jira_update_issue` to assign it to the PR author or bot.
 - After creation, update the PR title with `gh pr edit` so the key is
   present, reply on the PR with the key and Jira URL, and store the key with
   `task_update` metadata. Do not create a second ticket on later cycles —
@@ -129,8 +127,8 @@ in order:
 - **Unsigned commits**: rebase to re-sign, then push.
 - **PR merged**: do NOT `/wrap-up` (it deletes branches and drives Jira
   sprint transitions). Instead: resolve `jira_key` from task metadata or the
-  merged PR title (create the Jira Task first if neither exists, including
-  the best-effort author assignment); fetch transitions with
+  merged PR title (create the Jira Task first if neither exists, leaving it
+  unassigned); fetch transitions with
   `jira_get_transitions` and move the issue to **Release Pending** with
   `jira_transition_issue` (skip only if already in the appropriate final
   state); add a `jira_add_comment` with the merged PR URL and summary;
