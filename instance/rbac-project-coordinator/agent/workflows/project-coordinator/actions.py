@@ -221,7 +221,6 @@ def fresh_assessment(control: dict, config: tuple[str, str, str]) -> tuple[list[
         children,
         set(load_project_repos()),
         implementation_label,
-        os.environ.get("BOT_INCLUDE_BACKLOG", "").lower() in {"1", "true", "yes"},
     )
     if other_controls:
         assessment["gaps"].append("Parent has multiple same-Team control tickets")

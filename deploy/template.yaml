@@ -25,8 +25,6 @@ parameters:
   value: ""
 - name: BOT_SPRINT_PREFIX
   value: ""
-- name: BOT_INCLUDE_BACKLOG
-  value: "false"
 - name: BOT_INSTANCE_ID
   value: ""
 - name: BOT_CONFIG_REPO
@@ -175,8 +173,6 @@ objects:
             value: ${BOT_BOARD_NAME}
           - name: BOT_SPRINT_PREFIX
             value: ${BOT_SPRINT_PREFIX}
-          - name: BOT_INCLUDE_BACKLOG
-            value: ${BOT_INCLUDE_BACKLOG}
           - name: BOT_INSTANCE_ID
             value: ${BOT_INSTANCE_ID}
           - name: BOT_CONFIG_REPO

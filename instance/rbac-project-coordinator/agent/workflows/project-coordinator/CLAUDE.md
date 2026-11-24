@@ -108,10 +108,10 @@ creates or changes Jira issue links.
    against `dev-bot-labels` in `instance/rbac-config-review/agent/review-context.yaml`.
    Do not invent or hardcode handoff labels. Parallel tickets can be handed off
    in one cycle. The implementation
-   bot requires an unassigned ticket in a not-started status and an active
-   sprint, unless backlog intake is enabled. These are hard handoff gates. If
-   they fail, report the exact blocker and wait; do not assign the ticket or
-   change its sprint. Do not assign the ticket to this coordinator.
+   bot requires an unassigned ticket in `New`, `Backlog`, `Refinement`, or `To
+   Do`. Sprint membership does not affect handoff; release eligible tickets
+   regardless of sprint. If assignment or status fails, report the exact
+   blocker and wait. Do not assign the ticket to this coordinator.
    For every same-Team ticket already carrying the implementation label, run
    `label-review-prs` on every cycle. It finds open PRs in the ticket's selected
    upstream repos whose title contains the exact Jira key in brackets, then
