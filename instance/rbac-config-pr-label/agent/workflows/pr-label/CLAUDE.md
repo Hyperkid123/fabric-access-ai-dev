@@ -115,7 +115,7 @@ Only tasks with `external_key` prefix `pr-label:`. For each `pr_open`/`pr_change
 1. Resolve `jira_key` from task metadata or the merged PR title. If neither exists (for an older task), create the Jira Task first using the title/body/diff and add the key to the PR title.
    Apply the same best-effort PR-author assignment step used for newly claimed PRs; an assignment failure must not block merge cleanup.
 2. Fetch the issue's transitions with `jira_get_transitions`, move it to **Release Pending** with `jira_transition_issue` (skip only if it is already in the appropriate final state), and add a `jira_add_comment` containing the merged PR URL and a short summary.
-3. `task_update` status `done` (or `task_remove` to archive), retaining `metadata.jira_key` and the merge summary.
+3. `task_update` status `archived`, retaining `metadata.jira_key`, the merge summary, and `metadata.last_step="archived"`.
 4. Optionally remove the `$BOT_PR_LABEL` label: `gh pr edit <n> --repo <owner/repo> --remove-label "$BOT_PR_LABEL"`
 5. `/slack-notify` `release_pending` with the `pr-label:…` key
 6. `memory_store` learnings as `learning` + `codebase_pattern`
