@@ -102,8 +102,10 @@ coordinator never creates or changes Jira issue links.
    repository label to the control ticket and phase labels to all listed
    implementation tickets, but does not hand off tickets. It does not create or
    change Jira issue links. Use only the validated `approve-setup` action. It
-   reads the proposal from the preceding coordinator comment and rechecks Team,
-   parent, repo, and phase scope.
+   selects the latest setup block preceding that approval and rechecks Team,
+   parent, repo, and phase scope. Earlier user comments are context; they do not
+   invalidate a later explicit approval by themselves. If a newer user comment
+   follows the approval, process that comment before applying setup.
 
    `/coord start` is the single command to begin implementation. In the same
    cycle, reread the parent, control ticket, every same-Team implementation
@@ -140,9 +142,9 @@ coordinator never creates or changes Jira issue links.
    `/coord complete project` can finish the project only when all same-Team
    implementation tickets are complete. Other comments may clarify the plan,
    answer setup questions, correct the repo or phase proposal, or request
-   proposals. After any user correction, refresh the setup proposal. A
-   subsequent `/coord start` must use the freshly rechecked proposal; never
-   apply an older one.
+   proposals. After any user correction, refresh the setup proposal before
+   asking for another approval. A subsequent `/coord start` must use the
+   freshly rechecked proposal; never apply an older one.
    Do not execute historical comments on the first enrollment.
 5. **Plan gate**: the first phase must exist; the path through its tickets,
    parallel work, and exit criteria must be clear. Use existing directional

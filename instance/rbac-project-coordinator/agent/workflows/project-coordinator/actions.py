@@ -390,7 +390,7 @@ def setup_proposal(
         not is_own_comment(item)
         for item in items[approval_index + 1:]
     ):
-        raise ValueError("Setup request is stale; review the latest user feedback and submit a fresh request")
+        raise ValueError("A newer user comment exists after this setup request; process the latest comment")
     is_start = bool(START_COMMAND_RE.fullmatch(comment_body(approved_comment).strip()))
     if is_start and inline_proposal is None:
         raise ValueError("/coord start requires a fresh inline setup proposal after rereading Jira")
@@ -414,12 +414,6 @@ def setup_proposal(
             raise ValueError("Coordinator setup proposal is invalid JSON") from error
         if not isinstance(proposal, dict):
             raise ValueError("Coordinator setup proposal must be an object")
-        intervening_user_comments = [
-            entry for entry in items[proposal_index + 1:approval_index]
-            if not is_own_comment(entry)
-        ]
-        if intervening_user_comments:
-            raise ValueError("Setup proposal is stale; refresh it after the latest user feedback")
         return proposal
     raise ValueError("No coordinator setup proposal exists before this approval")
 
