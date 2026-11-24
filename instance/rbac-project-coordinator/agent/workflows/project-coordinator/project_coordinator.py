@@ -66,9 +66,13 @@ def is_assigned(assignee: object) -> bool:
                 str(identifier).strip().casefold() not in UNASSIGNED_MARKERS
                 for identifier in identifiers
             )
-        display_name = assignee.get("displayName")
-        if isinstance(display_name, str) and display_name.strip().casefold() in UNASSIGNED_MARKERS:
-            return False
+        for display_name_key in ("displayName", "display_name"):
+            display_name = assignee.get(display_name_key)
+            if (
+                isinstance(display_name, str)
+                and display_name.strip().casefold() in UNASSIGNED_MARKERS
+            ):
+                return False
         for key in ("value", "user", "assignee"):
             if assignee.get(key) is not None:
                 return is_assigned(assignee[key])
