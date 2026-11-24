@@ -100,8 +100,12 @@ setup proposal. The coordinator never creates or changes Jira issue links.
    preceding coordinator comment and rechecks Team, parent, repo, and phase
    scope. `/coord start` asks the coordinator to recheck the
    plan gate and release currently runnable tickets. It uses the same validated
-   handoff and repo label mapping as an automatic progress cycle. `/coord status`
-   gets a fresh status comment.
+   handoff and repo label mapping as an automatic progress cycle. `/coord plan`
+   rereads the current parent, control ticket, and every same-Team implementation
+   ticket, then publishes a fresh plan using the template above. Planning does
+   not hand off tickets or change their labels, assignees, links, or sprint
+   membership. Ask for new approval before applying changed phase or repo
+   proposals. `/coord status` gets a fresh status comment.
    `/coord create P-1` may create one previously proposed ticket.
    `/coord complete project` can finish the project only when all same-Team
    implementation tickets are complete. Other comments may clarify the plan,

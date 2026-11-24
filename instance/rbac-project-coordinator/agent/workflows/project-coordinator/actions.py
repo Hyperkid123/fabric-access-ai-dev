@@ -51,6 +51,7 @@ COMMAND_HELP_FOOTER = """---
 **Actions:**
 - `approve` / `approved` (or `/coord approve setup`) — approve the latest setup proposal.
 - `/coord start` — recheck the plan and release currently runnable tickets.
+- `/coord plan` — reread current Jira data and publish a fresh plan without handing off tickets.
 - `/coord status` — request a fresh project status.
 - `/coord create P-<number>` — create a ticket proposed in an earlier coordinator comment.
 - `/coord complete project` — confirm project completion after all planned tickets are complete."""
