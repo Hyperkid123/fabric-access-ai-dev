@@ -87,7 +87,6 @@ Deploy another bot target using `deploy/template.yaml` or
 | `BOT_IMPLEMENTATION_LABEL` | The implementation bot's actual Jira label, currently `hcc-ai-platform-accessmanagement` |
 | `BOT_JIRA_PROJECT` | `RHCLOUD` |
 | `BOT_TEAM_FIELD_ID` | Jira's Team custom field key: `customfield_10001` (also used by this instance's review profiles) |
-| `BOT_INCLUDE_BACKLOG` | Match the implementation bot's backlog setting; if `false`, runnable tickets need an active sprint |
 | `BOT_EXECUTION_ENGINE` | `coordinator` (the runner uses OpenCode for this workflow) |
 | `REHOR_OPENCODE_DEPLOYMENT_CONFIG` | `/home/botuser/app/instance/rbac-project-coordinator/opencode-deployment.json` |
 
@@ -111,25 +110,26 @@ coordinator run:
    and acceptance criteria. Every same-Team direct child other than the
    control ticket is treated as project work, so keep unrelated tickets out
    of this parent or include them in the plan.
-4. **Approve the setup proposal.** The coordinator suggests a repository and
+4. **Approve and start the setup.** The coordinator suggests a repository and
    one phase for each implementation ticket. Correct the suggestion if needed,
-   then reply `Approved`. The coordinator applies the repo allowlist to the
-   control ticket and phase labels to implementation tickets. It does not
-   create or change Jira issue links.
-5. **Make first handoffs possible.** Tickets ready for handoff must be
-   unassigned and in `New`, `Backlog`, `Refinement`, or `To Do`. They need an
-   active sprint unless `BOT_INCLUDE_BACKLOG` is enabled. The coordinator
-   chooses each ticket's repo from the control ticket's allowlist; make the
-   ticket scope clear enough to identify the right repo.
+   then include `approve` or `approved` in a new comment. The comment can contain
+   other text; it does not need to be an exact command. After rechecking the
+   latest plan, the coordinator applies the repo allowlist and phase labels, then
+   starts same-cycle handoff. It does not create or change Jira issue links.
+5. **Keep handoff tickets ready.** Tickets must be unassigned and in `New`,
+   `Backlog`, `Refinement`, or `To Do`. Sprint membership does not affect
+   coordination or handoff. The coordinator chooses each ticket's repo from the
+   control ticket's allowlist; make the ticket scope clear enough to identify
+   the right repo.
 
 On first enrollment, the coordinator analyzes all same-Team implementation
 tickets and posts a proposed order, phase suggestions, dependencies, parallel
 groups, repo choices, gaps, and questions on the control ticket. It normally
-sets `dev-bot-coordinator:needs-plan` and waits for your approval. Replying
-`Approved` lets it apply the proposed repo allowlist to the control ticket and
-phase labels to implementation tickets. Existing Jira dependency links inform
-planning, but the coordinator does not create or change issue links.
-After a scheduled run sees the plan gate pass, it sets
+sets `dev-bot-coordinator:needs-plan` and waits for your approval. A new comment
+containing `approve` or `approved` lets it refresh and validate the plan, apply
+the proposed repo allowlist and phase labels, and start handoff in the same
+cycle. Existing Jira dependency links inform planning, but the coordinator does
+not create or change issue links. It sets
 `dev-bot-coordinator:active` and releases the unblocked tickets in the earliest
 incomplete phase to the implementation bot. It adds `repo:<name>` and the
 configured `BOT_IMPLEMENTATION_LABEL` to each implementation ticket at handoff,
@@ -137,16 +137,16 @@ using `dev-bot-labels` from `instance/rbac-config-review/agent/review-context.ya
 When an implementation ticket has an open PR titled with its Jira key in
 brackets, the coordinator adds the same YAML's `review_label` (currently
 `dev-bot-review`) so the review bot can pick it up. It reports each handoff and
-newly labeled PR on the control ticket. Handoffs can start in the same run that
-applies an approved setup if the plan and intake gates pass.
+newly labeled PR on the control ticket. Sprint membership is not an intake gate;
+the coordinator never assigns or moves tickets to a sprint.
 The control ticket has one coordinator state label:
 `dev-bot-coordinator:needs-plan`, `dev-bot-coordinator:active`,
 `dev-bot-coordinator:blocked`, or `dev-bot-coordinator:complete`.
 
 The coordinator proposes missing tickets, edits, and closures; it creates a
 ticket only when a later comment says `/coord create P-1` for a named proposal.
-`/coord start` asks it to recheck the plan gate and hand off currently runnable
-tickets. `/coord status` requests a fresh summary; `/coord complete project`
+Approval itself starts plan recheck and same-cycle handoff; no separate start
+command is needed. `/coord status` requests a fresh summary; `/coord complete project`
 can finish the project after all same-Team implementation tickets are complete.
 It never edits or closes implementation tickets.
 
@@ -168,36 +168,36 @@ flowchart TD
     C -->|No| W["Wait for next scan"]
     C -->|Yes| R["Read one project<br/>parent, control, same-Team tickets"]
     R --> P["Propose repo and phases"]
-    P --> A{"User approves setup?"}
+    P --> A{"New user comment contains approval?"}
     A -->|No| Q["Answer questions or revise proposal<br/>on the control ticket"]
-    A -->|Yes| X["Apply repo allowlist and<br/>phase labels"]
-    X --> G{"Plan and intake ready?"}
+    A -->|Yes| G["Re-read and validate latest plan<br/>and ticket readiness"]
     G -->|No| B["Report blockers<br/>and wait"]
-    G -->|Yes| H["Hand off ready tickets<br/>to implementation bot"]
+    G -->|Yes| X["Apply repo allowlist and<br/>phase labels"]
+    X --> H["Add implementation labels and<br/>hand off ready tickets"]
     Q --> U["Save snapshot and handled comments"]
     B --> U
-    X --> U
     H --> U
     U --> S
 ```
 
 | Step | Inputs | What happens |
 |---|---|---|
-| 1. Scan | Project, control label, Team field key, repo allowlist, backlog setting, and saved memory snapshot. | Finds control tickets and their parent issues. Reads each control ticket's Team ID and includes only direct children with that same ID. |
-| 2. Detect change | Parent and control details; same-Team child status, labels, links, ownership, sprint, and human control comments. | Skips unchanged projects. Starts a cycle for a first run, changed project, or missing state label. |
+| 1. Scan | Project, control label, Team field key, repo allowlist, and saved memory snapshot. | Finds control tickets and their parent issues. Reads each control ticket's Team ID and includes only direct children with that same ID. |
+| 2. Detect change | Parent and control details; same-Team child status, labels, links, ownership, and human control comments. | Skips unchanged projects. Starts a cycle for a first run, changed project, or missing state label. |
 | 3. Review | Changed project payload: ticket keys, phases, statuses, dependencies, gaps, ready/waiting tickets, allowed repos, and new comments. | Coordinator rereads relevant Jira tickets, answers setup questions, and proposes a repo and phases. |
-| 4. Approve setup | The latest proposal and the user's approval comment. | One approval lets the validated action add the control repo allowlist and implementation phase labels. It does not create or change Jira issue links. |
-| 5. Check readiness | Approved setup, acceptance criteria, ticket assignees/statuses, active sprint or backlog setting. | Waits and reports any gaps. It hands off only unassigned, not-started tickets that also meet the sprint/backlog requirement. |
-| 6. Act and save | Ready ticket and latest Jira state. | Validated actions add the selected repo and implementation labels to ready tickets, then hand off the work. Saves the snapshot and handled comment IDs for the next scan. |
+| 4. Approve and start | Latest proposal and a new user comment containing `approve` or `approved`. | Re-reads and validates the plan, applies repo and phase labels, then starts same-cycle handoff without checking sprint membership. |
+| 5. Check readiness and act | Acceptance criteria, ticket dependencies, repo scope, assignees, and statuses. | Reports other plan gaps. For each eligible ticket, validated actions add the selected repo and implementation labels, then hand off the work. Saves the snapshot and handled comment IDs for the next scan. |
 
 On the control ticket, users can request:
 
 ```text
 /coord status
-/coord approve setup
 /coord create P-1
 /coord complete project
 ```
+
+To approve a setup and start implementation, include `approve` or `approved`
+anywhere in a new user comment. The entire comment need not be a command.
 
 `/coord create P-1` applies only to a previously proposed ticket;
 `/coord complete project` requires all in-scope tickets to be complete.
@@ -211,8 +211,9 @@ issues before acting.
 
 Every coordinator comment ends with a **Possible next steps** footer. Its
 suggestions are generated from the current ticket statuses, plan gaps, approval
-requests, and handoff prerequisites. When no user action is needed, the footer
-points to the next scheduled scan.
+requests, and handoff prerequisites; it never asks users to assign tickets to
+sprints. When no user action is needed, the footer points to the next scheduled
+scan.
 
 ## Build
 

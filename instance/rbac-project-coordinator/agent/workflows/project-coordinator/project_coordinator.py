@@ -80,26 +80,6 @@ def is_assigned(assignee: object) -> bool:
     return bool(assignee)
 
 
-def has_active_sprint(sprint: object) -> bool:
-    """Return whether Jira reports membership in a currently active sprint."""
-    if isinstance(sprint, list):
-        return any(has_active_sprint(item) for item in sprint)
-    if isinstance(sprint, dict):
-        state = sprint.get("state")
-        return isinstance(state, str) and state.strip().casefold() == "active"
-    if isinstance(sprint, str):
-        try:
-            decoded = json.loads(sprint)
-        except json.JSONDecodeError:
-            decoded = sprint
-        if decoded != sprint:
-            return has_active_sprint(decoded)
-        return sprint.strip().casefold() == "active" or bool(
-            re.search(r"\bstate\s*[=:]\s*active\b", sprint, re.IGNORECASE)
-        )
-    return False
-
-
 def key_of(issue: dict | str | None) -> str:
     if isinstance(issue, str):
         return issue
@@ -421,7 +401,6 @@ def summarize_child(issue: dict) -> dict:
     blockers, _ = linked_issues(issue)
     issue_labels = labels(issue)
     assignee = value(issue, "assignee")
-    sprint = value(issue, "customfield_10020")
     return {
         "key": key_of(issue),
         "summary": value(issue, "summary") or "",
@@ -431,13 +410,11 @@ def summarize_child(issue: dict) -> dict:
         "implementation_labeled": False,  # filled by build_snapshot
         "blockers": sorted(blockers),
         "assignee": is_assigned(assignee),
-        "active_sprint": has_active_sprint(sprint),
         "description": str(value(issue, "description") or "")[:2000],
     }
 
 
-def evaluate(control: dict, children: list[dict], repo_names: set[str], implementation_label: str,
-             include_backlog: bool) -> dict:
+def evaluate(control: dict, children: list[dict], repo_names: set[str], implementation_label: str) -> dict:
     """Mechanical plan checks. The agent still judges requirement quality."""
     control_labels = labels(control)
     gaps: list[str] = []
@@ -501,8 +478,6 @@ def evaluate(control: dict, children: list[dict], repo_names: set[str], implemen
                 blockers.append(f"status {ticket['status']} is not not-started")
             if ticket["assignee"]:
                 blockers.append("ticket is not unassigned")
-            if not ticket["active_sprint"] and not include_backlog:
-                blockers.append("ticket is outside the active sprint and backlog intake is disabled")
             if blockers:
                 blocked_tickets.append({"key": ticket["key"], "reasons": blockers})
                 continue
@@ -544,7 +519,6 @@ def fingerprint(parent: dict, control: dict, children: list[dict], team_field_id
                 "status": status_name(child), "team": team_id(child, team_field_id),
                 "labels": sorted(labels(child)), "links": value(child, "issuelinks") or [],
                 "assignee": is_assigned(value(child, "assignee")),
-                "active_sprint": has_active_sprint(value(child, "customfield_10020")),
             }
             for child in sorted(children, key=key_of)
         ],
@@ -559,7 +533,6 @@ def main() -> None:
     control_label = os.environ.get("BOT_LABEL", "")
     team_field_id = os.environ.get("BOT_TEAM_FIELD_ID", "")
     implementation_label = os.environ.get("BOT_IMPLEMENTATION_LABEL", "")
-    include_backlog = os.environ.get("BOT_INCLUDE_BACKLOG", "").lower() in {"1", "true", "yes"}
     required = {
         "BOT_LABEL": control_label,
         "BOT_TEAM_FIELD_ID": team_field_id,
@@ -615,7 +588,7 @@ def main() -> None:
                 and control_label in labels(issue)
                 and team_id(issue, team_field_id) == control_team_id
             ]
-            assessment = evaluate(control, children, repo_names, implementation_label, include_backlog)
+            assessment = evaluate(control, children, repo_names, implementation_label)
             if not control_team_id:
                 assessment["gaps"].append("Control ticket has no Jira Team ID")
                 assessment["ready"] = []

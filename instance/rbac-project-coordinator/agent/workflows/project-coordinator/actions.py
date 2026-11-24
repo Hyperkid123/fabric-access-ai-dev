@@ -46,15 +46,10 @@ STATES = COORD_STATES
 ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 LABEL_RE = re.compile(r"^[A-Za-z0-9:_-]+$")
 SETUP_PROPOSAL_RE = re.compile(r"```(?:[A-Za-z0-9_-]+)?\s*(.*?)\s*```", re.DOTALL)
-START_COMMAND_RE = re.compile(r"^\s*/coord\s+start\s*$", re.IGNORECASE)
-SETUP_AUTHORIZATION_RE = re.compile(
-    r"\b(?:approve|approved)\b|^\s*/coord\s+start\s*$",
-    re.IGNORECASE,
-)
+SETUP_APPROVAL_RE = re.compile(r"approv(?:e|ed)", re.IGNORECASE)
 COMMAND_HELP_FOOTER = """---
 **Actions:**
-- `approve` / `approved` (or `/coord approve setup`) — approve the latest setup proposal.
-- `/coord start` — reread the plan, apply a clear setup, and release each eligible ticket.
+- A new user comment containing `approve` or `approved` — reread and validate the latest plan, apply repository and phase labels, then hand off eligible tickets to the implementation bot in the same cycle.
 - `/coord plan` — reread current Jira data and publish a fresh plan without handing off tickets.
 - `/coord status` — request a fresh project status.
 - `/coord create P-<number>` — create a ticket proposed in an earlier coordinator comment.
@@ -227,7 +222,6 @@ def fresh_assessment(control: dict, config: tuple[str, str, str]) -> tuple[list[
         children,
         set(load_project_repos()),
         implementation_label,
-        os.environ.get("BOT_INCLUDE_BACKLOG", "").lower() in {"1", "true", "yes"},
     )
     if other_controls:
         assessment["gaps"].append("Parent has multiple same-Team control tickets")
@@ -354,14 +348,22 @@ def label_review_prs(request: dict, config: tuple[str, str, str]) -> dict:
     }
 
 
-def request_comment(control: dict, comment_id: str, command_pattern: str) -> dict:
+def request_comment(
+    control: dict,
+    comment_id: str,
+    command_pattern: str,
+    *,
+    requirement: str = "the required authorization",
+) -> dict:
     matches = [item for item in comments(control) if str(item.get("id") or "") == comment_id]
     if len(matches) != 1:
         raise ValueError("Request comment not found or ambiguous")
     item = matches[0]
     body = comment_body(item)
-    if is_own_comment(item) or not re.search(command_pattern, body, re.IGNORECASE):
-        raise ValueError("Comment is not an explicit user request")
+    if is_own_comment(item):
+        raise ValueError("Coordinator-authored comments cannot authorize actions")
+    if not re.search(command_pattern, body, re.IGNORECASE):
+        raise ValueError(f"User comment does not contain {requirement}")
     return item
 
 
@@ -370,7 +372,7 @@ def setup_proposal(
     approval_comment_id: str,
     inline_proposal: object | None = None,
 ) -> dict:
-    """Read a proposal after approval, or accept a fresh plan authorized by /coord start."""
+    """Read the latest setup proposal or accept the freshly checked inline plan."""
     items = comments(control)
     approval_indexes = [
         index for index, item in enumerate(items)
@@ -382,7 +384,8 @@ def setup_proposal(
     approved_comment = request_comment(
         control,
         approval_comment_id,
-        SETUP_AUTHORIZATION_RE.pattern,
+        SETUP_APPROVAL_RE.pattern,
+        requirement="approval wording (`approve` or `approved`)",
     )
     if str(approved_comment.get("id") or "") != approval_comment_id:
         raise ValueError("Setup approval comment changed during validation")
@@ -391,12 +394,7 @@ def setup_proposal(
         for item in items[approval_index + 1:]
     ):
         raise ValueError("A newer user comment exists after this setup request; process the latest comment")
-    is_start = bool(START_COMMAND_RE.fullmatch(comment_body(approved_comment).strip()))
-    if is_start and inline_proposal is None:
-        raise ValueError("/coord start requires a fresh inline setup proposal after rereading Jira")
     if inline_proposal is not None:
-        if not is_start:
-            raise ValueError("Inline setup proposals require an explicit /coord start request")
         if not isinstance(inline_proposal, dict):
             raise ValueError("Inline setup proposal must be an object")
         return inline_proposal
@@ -408,6 +406,11 @@ def setup_proposal(
         match = SETUP_PROPOSAL_RE.search(body)
         if not match:
             continue
+        if any(
+            not is_own_comment(comment)
+            for comment in items[proposal_index + 1:approval_index]
+        ):
+            raise ValueError("Setup proposal is stale; refresh it after the latest user feedback")
         try:
             proposal = json.loads(match.group(1))
         except json.JSONDecodeError as error:
@@ -419,7 +422,7 @@ def setup_proposal(
 
 
 def approve_setup(request: dict, config: tuple[str, str, str]) -> dict:
-    """Apply a repo allowlist and phase plan after explicit user authorization."""
+    """Apply the approved setup and hand off eligible tickets in its first phase."""
     control = checked_control(request["control_key"], config)
     _, team_field_id, implementation_label = config
     comment_id = str(request.get("request_comment_id") or "")
@@ -498,12 +501,48 @@ def approve_setup(request: dict, config: tuple[str, str, str]) -> dict:
         if set(updated) != set(labels(fresh_children[ticket_key])):
             set_labels(ticket_key, updated)
             updated_phases.append(ticket_key)
+    refreshed_control = get_issue(key_of(control))
+    assessed_children, assessment = fresh_assessment(refreshed_control, config)
+    children_by_key = {key_of(child): child for child in assessed_children}
+    handed_off: list[str] = []
+    handoff_failures: list[dict[str, str]] = []
+    if not assessment["gaps"]:
+        for ready_ticket in assessment["ready"]:
+            ticket_key = ready_ticket["key"]
+            child_repos = {
+                label[5:] for label in labels(children_by_key[ticket_key])
+                if label.startswith("repo:")
+            }
+            selected_repos = sorted(child_repos) or [repo_name]
+            try:
+                handoff(
+                    {"control_key": key_of(control), "ticket_key": ticket_key, "repos": selected_repos},
+                    config,
+                )
+            except (RuntimeError, ValueError) as error:
+                handoff_failures.append({"ticket_key": ticket_key, "error": str(error)})
+            else:
+                handed_off.append(ticket_key)
+
+    already_released = [
+        ticket["key"] for ticket in assessment["tickets"]
+        if ticket["implementation_labeled"] and ticket["phase_labels"] == [assessment["current_phase"]]
+    ] if assessment["current_phase"] else []
+    if not assessment["gaps"] and (handed_off or already_released):
+        set_state({"control_key": key_of(control), "state": "dev-bot-coordinator:active"}, config)
     return {
         "control_key": key_of(control),
         "repository": repo_name,
         "control_repo_label_added": control_repo_label not in current_control_labels,
         "phase_labels_updated": updated_phases,
         "approval_comment_id": comment_id,
+        "handed_off": handed_off,
+        "already_released": already_released,
+        "handoff_failures": handoff_failures,
+        "handoff_blockers": assessment["gaps"],
+        "blocked_tickets": assessment["blocked_tickets"],
+        "waiting": assessment["waiting"],
+        "next_action": "report_handoff_results",
     }
 
 
