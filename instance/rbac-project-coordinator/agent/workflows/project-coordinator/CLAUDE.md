@@ -36,9 +36,9 @@ status summary, followed by this table:
 ```markdown
 <One short status summary with the current phase, progress counts, and key blocker or decision.>
 
-| Ticket | Summary | Current phase | Suggested phase | Existing blocking dependencies | Parallel group | Repository |
-|---|---|---|---|---|---|---|
-| RHCLOUD-123 | Short outcome | None | phase:01 | None | A | insights-rbac |
+| Ticket | Summary | Current phase | Existing blocking dependencies | Parallel group | Repository |
+|---|---|---|---|---|---|
+| RHCLOUD-123 | Short outcome | phase:01 | None | A | insights-rbac |
 
 **Proposed sequence:**
 - **RHCLOUD-123 → {RHCLOUD-124, RHCLOUD-125} → RHCLOUD-126**
