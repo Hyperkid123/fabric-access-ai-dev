@@ -229,8 +229,11 @@ run. The default can also be changed in `dimensions.yaml`.
 The catalog also defines `package_upgrade_profile`. A dependency-manifest-only
 diff selects just `package-upgrades` and the existing
 `cross-repo-dependencies` dimension, plus any repository-required skills. The
-package reviewer checks application compatibility and evidence-backed CVE
-claims; the cross-repository pass checks declared consumers. Mixed diffs keep
+dedicated Luna package reviewer checks official changelogs between the old and
+new versions, traces breaking changes to application use, and verifies CVE
+affected/fixed ranges against advisories. The verifier checks release-note
+URLs cited by package findings; the cross-repository pass checks declared
+consumers. Mixed diffs keep
 the ordinary applicable dimensions and add both package passes. Explicit
 focused runs keep their requested selection. The full-review risk assessor,
 missing-context detector, and verifier still run, so the reduced cost comes
@@ -266,8 +269,9 @@ Each item under `dimensions` describes one review pass. Common fields are:
   `plugin` and `repo` fields identify its source attribution.
 - **`model_preference`** (optional): routes the pass using
   `config.model_routing` in `dimensions.yaml`. `terra` runs in the read-only
-  `review-terra` subagent and `luna` runs in the read-only `review-luna`
-  subagent. A missing preference uses the configured Terra default.
+  `review-terra` subagent, `luna` runs in the read-only `review-luna` subagent,
+  and `package-upgrades` uses its dedicated read-only Luna reviewer. A missing
+  preference uses the configured Terra default.
   `build_context.py` resolves each selected pass to `review_agent` in
   `review_plan`; passes run in batches of at most four concurrent workers, and
   an unavailable worker is recorded as a failure instead of silently

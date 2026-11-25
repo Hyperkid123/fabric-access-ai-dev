@@ -1,6 +1,6 @@
 # Dimensional Review catalog. Reviewer instructions live in this skill's reviewers/ directory.
 # All source paths are local to the directory containing SKILL.md.
-version: 9
+version: 10
 last_updated: '2026-11-25'
 config:
   consensus_threshold: 3
@@ -11,6 +11,7 @@ config:
     agents:
       terra: review-terra
       luna: review-luna
+      package-upgrades: review-package-upgrades
 language_extensions:
   python:
   - py
@@ -293,7 +294,7 @@ dimensions:
   category: specialist
   languages: all
   description: Runtime compatibility, transitive effects, and security impact of dependency version changes
-  model_preference: luna
+  model_preference: package-upgrades
   source:
     path: reviewers/package-upgrades.md
     plugin: dimensional-review:package-upgrades

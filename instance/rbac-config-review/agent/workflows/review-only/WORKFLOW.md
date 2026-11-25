@@ -70,14 +70,14 @@ start a model session.
 | Config validation | `review_config.py` | Script | Loads and strictly validates `review-context.yaml` (GitHub URL shape, `.md`-only doc links, unique ids) |
 | Context builder | `build_context.py` | Script | Checks out the PR head read-only, clones related repos at a pinned SHA, fetches configured Markdown docs at a pinned commit, writes `manifest.json` |
 | Skill preparation | `review_skills.py` | Script | Selects dimensions, reads selected recipe YAML at a pinned commit, and generates per-run review skills |
-| Package upgrade profile | `dimensions.yaml` + `review_skills.py` | Script | Routes dependency-manifest-only diffs to `package-upgrades` plus the existing `cross-repo-dependencies` pass; mixed diffs keep normal coverage and add both |
+| Package upgrade profile | `dimensions.yaml` + `review_skills.py` | Script | Routes dependency-manifest-only diffs to a dedicated Luna `package-upgrades` reviewer plus `cross-repo-dependencies`; it checks official changelogs and CVE advisories against application use |
 | Documentation-only profile | `dimensions.yaml` + `review_skills.py` | Script | Routes documentation-only diffs to `documentation`, `cross-repo-dependencies`, and `architecture` instead of the full default dimension set |
 | Impact analysis | `impact_analysis.py` | Script | Deterministically (no LLM) extracts changed identifiers from the diff and `git grep`-matches them in related repos → `impact.json`'s `consumer_usages` (candidates, not confirmed breakage) |
 | PR command detection | `rereview_requests.py`, `review_bot_commands.py`, `review_queue.py` | Script | Finds exact verification/re-review commands and new `/review-bot` requests in top-level comments, inline threads, and submitted review bodies; the runner answers generic requests from pinned context after organization-membership checks |
 | Jira issue creation | `.opencode/agents/jira-ticket-creator.md`, `jira_config.py` | **AI** (subagent) + script | Handles an explicit Jira request or an authorized cross-repo follow-up using the target repository's App Interface profile and an idempotency marker |
-| Model routing | `review_skills.py` + `dimensions.yaml` | Script | Resolves each pass's model preference to the configured Terra or Luna subagent in `review_plan` |
-| Review criteria | `skills/dimensional-review/SKILL.md` | **AI** (review-terra / review-luna) | Multi-dimension review over pinned context using the configured model profile |
-| Review workers | `.opencode/agents/review-terra.md`, `review-luna.md` | **AI** (subagents) | Read-only workers for dimensions routed to Terra or Luna |
+| Model routing | `review_skills.py` + `dimensions.yaml` | Script | Resolves each pass's preference to its configured Terra, Luna, or package-upgrade worker in `review_plan` |
+| Review criteria | `skills/dimensional-review/SKILL.md` | **AI** (review-terra / review-luna / review-package-upgrades) | Multi-dimension review; package upgrades inspect official release notes and advisories |
+| Review workers | `.opencode/agents/review-terra.md`, `review-luna.md`, `review-package-upgrades.md` | **AI** (subagents) | Read-only workers; only the package-upgrade worker can search and fetch upstream sources |
 | Result merge | `merge_review_results.py` | Script | Validates worker results, groups duplicates, and ranks findings by consensus, severity, and confidence |
 | Risk classifier | `.opencode/agents/review-risk-assessor.md` | **AI** (subagent) | First subagent after context is pinned; independently classifies risk before dimension review |
 | Context questions and answers | `context_questions.py` | Script | Posts one marked question per comment and finds PR-author answers for the detector to assess |
@@ -102,7 +102,8 @@ execution are not enabled by importing a recipe. The `high` level includes
 the applicable built-in dimensions, including documentation and observability.
 Terra is the default model for the primary `review-runner` and for dimensions
 without an explicit preference. Each dimension's `model_preference` selects a
-read-only worker: Terra uses `review-terra`, and Luna uses `review-luna`.
+read-only worker: Terra uses `review-terra`, Luna uses `review-luna`, and the
+`package-upgrades` preference uses `review-package-upgrades`.
 `review_plan` records the resolved worker. The runner gives each worker its
 dimension and the guide and manifest paths. Dimensions run in plan order in
 batches of at most four, and the runner records each batch before the next.
@@ -123,8 +124,11 @@ documentation changes still select the full applicable set, and an explicit
 Dependency-manifest-only changes use the `package_upgrade_profile` instead of
 the high preset: only `package-upgrades` and `cross-repo-dependencies` run,
 plus any repository-required skills. This keeps package-only updates focused
-while checking runtime/API compatibility, evidence-backed CVE claims, and
-declared cross-repository consumers. Mixed code and dependency changes keep
+while checking official changelogs from old to new versions, application
+compatibility, advisory-confirmed CVE ranges, and declared cross-repository
+consumers. The dedicated low-cost Luna package reviewer checks official
+release notes, and the verifier fetches only sources cited by package findings.
+Mixed code and dependency changes keep
 the normal applicable dimensions and add both package passes. Explicit
 `--focus` runs retain their requested selection. The risk assessor,
 missing-context detector, and verifier continue as part of the full-review
@@ -370,6 +374,7 @@ sequenceDiagram
     participant Q as Preflight
     participant R as review-runner
     participant L as review-luna
+    participant U as review-package-upgrades
     participant T as review-terra
     participant V as review-verifier
     participant M as missing-context-detector
@@ -389,6 +394,9 @@ sequenceDiagram
             and Luna-preference passes
                 R->>L: Run assigned passes with pinned context
                 L->>R: Dimension JSON results
+            and Package-upgrade passes
+                R->>U: Check changelog and advisory against app use
+                U->>R: Dimension JSON with source URLs
             end
             R->>R: Record results by dimension
         end
@@ -696,19 +704,23 @@ bot_status_update(instance_id="fabric-access-review", state="idle",
 ## Guardrails
 
 - **review-runner** permissions deny `edit`, all subagents except
-  `missing-context-detector`, `review-terra`, `review-luna`, and
+  `missing-context-detector`, `review-terra`, `review-luna`,
+  `review-package-upgrades`, and
   `review-verifier`, `webfetch`, `websearch`, and the shell patterns
   `git push*`, `git commit*`, `gh pr merge*`, `gh pr edit*`, `gh pr
   review*--approve*`.
 - **missing-context-detector** permissions deny `edit`, `shell`, all subagents,
   `webfetch`, and `websearch`; it evaluates context and answers against pinned
   sources.
-- **review-terra** permissions deny `edit`, `shell`, all subagents,
-  `webfetch`, and `websearch`; it reviews only the supplied dimension guide and
-  pinned sources.
-- **review-verifier** permissions deny `edit`, `shell`, all subagents,
-  `webfetch`, and `websearch` — it can only reason over the context it's
-  given.
+- **review-terra** and **review-luna** deny `edit`, `shell`, all subagents,
+  `webfetch`, and `websearch`; they review only the supplied dimension guide
+  and pinned sources.
+- **review-package-upgrades** denies `edit`, `shell`, and all subagents; it can
+  search for and fetch official package changelogs and advisories only for the
+  `package-upgrades` pass.
+- **review-verifier** denies `edit`, `shell`, all subagents, and `websearch`.
+  It can fetch only the official changelog or advisory URLs cited by
+  `package-upgrades` findings.
 - Idempotency: a task's `review_id` (once set) means every later cycle edits
   that same review via `PUT .../reviews/<review_id>` instead of posting a new
   one — there is at most one review summary per PR. The inline publisher

@@ -47,6 +47,7 @@ Dimensions can set `model_preference` in
 |---|---|---|
 | `terra` | Read-only `review-terra` subagent, medium effort | Default for orchestration and dimensions without a preference; also used for broad, cross-cutting, or high-judgment analysis, including dimensions where missing a subtle interaction could affect correctness, security, architecture, or concurrency. |
 | `luna` | Read-only `review-luna` subagent, high effort | Used for explicitly routed focused checks. |
+| `package-upgrades` | Read-only `review-package-upgrades` subagent, Luna high effort | Inspects official package changelogs and advisories for dependency-upgrade reviews. |
 
 The read-only `review-risk-assessor` runs first, after the PR context is pinned
 and before dimension workers, once per full review. It classifies
@@ -59,6 +60,10 @@ resolves every selected built-in or dynamic pass to a preference and worker in
 different model ad hoc, infer a preference from the PR, or move a dimension to
 another model during a run. Change the catalog preference when the intended
 assignment should change for future reviews.
+
+The `package-upgrades` preference is reserved for the dependency-upgrade
+dimension and routes it to a dedicated Luna reviewer that can fetch official
+upstream changelogs. Other passes retain their configured Terra/Luna agents.
 
 Run passes in batches of at most four concurrent workers, forming batches in
 plan order. Give each selected worker its assigned dimension, guide path,
