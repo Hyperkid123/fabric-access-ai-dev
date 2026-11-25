@@ -101,9 +101,9 @@ The per-repository settings are:
   selected skills define the detailed inline layout for findings attributed to
   them and must complete for publication. Other findings use the standard
   inline layout. Both formats use the same status summary template: a short
-  PR-purpose sentence, affected-area bullets derived from the pinned diff, a
-  Change risk section, a Findings table with inline-thread links, and commands
-  for contextual answers, re-review, and verification.
+  PR-purpose sentence, every affected area in human-readable bullets, a
+  bullet-point risk section, a compact findings table, and commands for
+  contextual answers, re-review, and verification.
 - **`jira`** (optional): Its presence enables Jira follow-up for that review
   repository. `team_field` is the Jira Team custom-field key; each profile maps
   a target repository to a Jira project, Team name/ID, and optional labels.
@@ -151,12 +151,13 @@ Write comments for developers working on this project: direct, technically
 precise, and easy to scan. Use short sentences and standard terminology. This
 applies to status comments, inline findings, context questions, and answer
 follow-ups. The status comment has a short description of what the PR changes,
-affected-area bullets derived from the pinned diff, a Change risk section with
-the assessed level and rationale, then a Findings heading with counts and a
-table of plain-text finding IDs, severity, dimension, resolution state, and
-separate inline-comment links. It
-ends with contextual-answer, learning-extraction, re-review, and verification
-commands.
+human-readable affected-area bullets, a bullet-point Change risk section, and
+a Findings heading with counts and a compact table. The table lists accepted
+and rejected reviewer outcomes, verified addressed findings, and cross-repo
+follow-ups. The Status column uses `Accepted`, `Rejected`, `Addressed`, or
+`Follow-up`. Rejected candidates stay in the ledger and table so IDs are not
+reused, but do not get inline threads. It ends with contextual-answer,
+learning-extraction, re-review, and verification commands.
 Detailed scenarios, evidence, and fixes belong in the inline comments.
 
 Every confirmed finding and action-required feedback comment that describes
@@ -559,8 +560,13 @@ stable across the summary, inline comments, and later review updates.
 
 The user-facing output is GitHub comments: one review summary and anchored
 inline threads for confirmed findings. The summary has a short description of
-the PR, a Change risk section and Findings table with inline-thread links, and
-prompts for contextual answers, re-review, or verification. A comment beginning with `/review-bot` in
+the PR, a complete bullet list of affected areas, a bullet-point Change risk
+section, a compact findings table with inline-thread links, and prompts for
+contextual answers, re-review, or verification. The table uses short, single-
+word headers (`ID`, `Status`, `Finding`) and code-styled IDs to avoid wrapping.
+The `Status` values are `Accepted`, `Rejected`, `Addressed`, and `Follow-up`;
+cross-repository follow-ups are routed to their configured Jira owner.
+A comment beginning with `/review-bot` in
 the PR conversation, an inline thread, or a submitted review body asks the agent
 to answer using a manifest pinned to the current PR revision. When available,
 the manifest includes the tracked status review, validated findings, and review

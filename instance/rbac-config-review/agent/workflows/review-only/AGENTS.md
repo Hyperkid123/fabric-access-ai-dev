@@ -629,8 +629,10 @@ retryable.
    task's ledger.json (initial ledger on the first review, merged ledger on
    later reviews). The ledger form also validates re-checks. It renders the
    review body inside `publication.json`, including a Change risk section and
-   revision-bound risk marker (flat, or with carried-forward status)
-   and reports the update_count (0 on the first review).
+   revision-bound risk marker (flat, or with carried-forward status). It also
+   writes rejected candidates with their verifier reasons to the JSON
+   `rejected_findings` array and the status table, but never to inline comments.
+   It reports the update_count (0 on the first review).
 
    After the verifier and evidence gate confirm the findings, route new
    cross-repository follow-ups before preparing GitHub comments. For each new
@@ -649,17 +651,23 @@ retryable.
 
    For `manifest.format == "standard"`, use the generated publication JSON and
    inline comments. The status summary has a `Review N` heading (without `#N`),
-   the one-sentence `pr_summary`, an `Affected areas` section with concise
-   bullets derived from the pinned changed paths, and a `Findings` table with
-   plain-text IDs,
-   severity, dimension, resolution state, and a separate link to each inline
-   thread. Keep finding details in the inline comments. The table and help
-   footer use the fixed workflow template. `manifest.format == "custom"` uses
-   that same status template; selected skills control only the detailed inline
-   comment layout.
+   the one-sentence `pr_summary`, a complete `Affected areas` bullet list, a
+   bullet-point `Change risk` section, and a compact `ID | Status | Finding`
+   table. The affected-area list is generated from every path in `impact.json`;
+   keep one human-readable bullet for every area and never replace remaining
+   areas with an “additional areas” count. The table keeps each heading to one
+   short word, displays IDs in code style, and puts severity, dimensions, and
+   the inline-thread link in the `Finding` cell. Use `Accepted` for verifier-
+   confirmed open findings, `Rejected` for verifier-refuted candidates,
+   `Addressed` for fixes confirmed by later verification, and `Follow-up` for
+   confirmed cross-repository findings routed to Jira. Rejected findings appear
+   in the table and ledger but never receive inline comments. Keep finding
+   details in inline comments. The table and help footer use the fixed workflow
+   template. `manifest.format == "custom"` uses that same status template;
+   selected skills control only the detailed inline comment layout.
    First run the same command with `--skill-results <skill-results.json>
    --risk-assessment <risk-assessment.json> --prepare-custom <verified.json>`.
-   It writes the PR summary, confirmed findings, updated ledger, review
+   It writes the PR summary, confirmed and rejected findings, updated ledger, review
    number, recorded formatting-skill results, and their pinned guide paths; it
    does not write a review. Read each of those guides and results, and use each skill's requested
    layout to compose `custom-format.json` from only the verified JSON. Keep

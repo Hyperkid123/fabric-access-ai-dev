@@ -2,6 +2,14 @@
 
 Whenever this instance creates a Jira issue, set its **Team** field to **Console Access** in the `jira_create_issue` call. Resolve the Team custom-field ID and required value format from Jira field options or an existing issue, then include it in the `additional_fields` JSON alongside any other required fields. If needed, find an existing RHCLOUD issue with Team = Console Access using `jira_search`, inspect it with `jira_get_issue(fields="*all")`, and reuse the Team custom-field key and value shape; confirm the option with `jira_get_field_options` when available. Do not create the issue without the Team value; if it cannot be set, report the blocker.
 
+## Implementation PR titles
+
+When this instance opens a pull request for a Jira implementation ticket, put
+that ticket key at the start of the title in square brackets, followed by the
+conventional title. For example: `[RHCLOUD-12345] feat: add new feature`.
+Use the implementation ticket's exact key; do not append it after the title or
+use a different related ticket key.
+
 ## Review-bot PR feedback
 
 The instance preflight wakes this Jira-sprint workflow for new comments by

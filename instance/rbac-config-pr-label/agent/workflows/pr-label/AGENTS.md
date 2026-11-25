@@ -15,12 +15,13 @@ instead — unless the title/merge policy or a human request requires Jira.
 
 ## PR title and Jira policy
 
-Every PR handled by this workflow MUST contain a Jira key in square brackets
-in its title (e.g. `feat: add new feature [RHCLOUD-12345]`, matching
+Every PR handled by this workflow MUST start with a Jira key in square brackets
+in its title (e.g. `[RHCLOUD-12345] feat: add new feature`, matching
 `[PROJECT-12345]`). Check before implementing or updating a claimed PR.
 
 - Title already has a key → use that issue; save it as task metadata
-  `jira_key`.
+  `jira_key`. If the key is not the title prefix, move it to the prefix with
+  `gh pr edit` before implementing.
 - No key → create one Jira Task reflecting the PR's actual changes, using
   `$BOT_JIRA_PROJECT` when set, otherwise `RHCLOUD`. Include the PR URL,
   original title/body, changed files, and an implementation summary. Set the
@@ -30,10 +31,11 @@ in its title (e.g. `feat: add new feature [RHCLOUD-12345]`, matching
   `additional_fields`; do not create the issue without it — report the
   blocker if it cannot be set). Leave the Jira issue unassigned. Do not set
   its assignee or call `jira_update_issue` to assign it to the PR author or bot.
-- After creation, update the PR title with `gh pr edit` so the key is
-  present, reply on the PR with the key and Jira URL, and store the key with
-  `task_update` metadata. Do not create a second ticket on later cycles —
-  first check task metadata and the current PR title.
+- After creation, update the PR title with `gh pr edit` so the key is the
+  first title element in square brackets, followed by the original title with
+  any old Jira-key suffix removed. Reply on the PR with the key and Jira URL,
+  and store the key with `task_update` metadata. Do not create a second ticket
+  on later cycles — first check task metadata and the current PR title.
 
 A PR with a missing key is actionable work, not a reason to skip it.
 
