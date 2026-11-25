@@ -59,14 +59,14 @@ def test_parallel_first_tickets_and_release_pending_unblock_next_phase():
     parallel = issue("RHCLOUD-103", labels=["phase:01"], links=[relates("RHCLOUD-101")])
     later = issue("RHCLOUD-104", labels=["phase:02"], links=[blocked_by("RHCLOUD-102"), blocked_by("RHCLOUD-103")])
 
-    result = coordinator.evaluate(control, [first, parallel, later], {"rbac-config"}, CONFIG[2], False)
+    result = coordinator.evaluate(control, [first, parallel, later], {"rbac-config"}, CONFIG[2])
     assert result["gaps"] == []
     assert result["current_phase"] == "phase:01"
     assert {item["key"] for item in result["ready"]} == {"RHCLOUD-102", "RHCLOUD-103"}
 
     first["fields"]["status"]["name"] = "Release Pending"
     parallel["fields"]["status"]["name"] = "Release Pending"
-    result = coordinator.evaluate(control, [first, parallel, later], {"rbac-config"}, CONFIG[2], False)
+    result = coordinator.evaluate(control, [first, parallel, later], {"rbac-config"}, CONFIG[2])
     assert result["current_phase"] == "phase:02"
     assert result["ready"] == [{"key": "RHCLOUD-104", "repo_candidates": ["rbac-config"]}]
 
@@ -74,7 +74,7 @@ def test_parallel_first_tickets_and_release_pending_unblock_next_phase():
 def test_control_phase_stops_handoff_without_a_relation_link():
     control = issue("RHCLOUD-101", labels=["dev-bot-coordinator", "repo:rbac-config", "phase:01"])
     first = issue("RHCLOUD-102", labels=["phase:01"])
-    result = coordinator.evaluate(control, [first], {"rbac-config"}, CONFIG[2], False)
+    result = coordinator.evaluate(control, [first], {"rbac-config"}, CONFIG[2])
     assert any("control ticket" in gap.lower() for gap in result["gaps"])
     assert not any("must relate" in gap for gap in result["gaps"])
     assert result["ready"] == []
@@ -85,7 +85,7 @@ def test_unphased_child_is_a_plan_gap_without_relation_links():
     first = issue("RHCLOUD-102", labels=["phase:01"], links=[relates("RHCLOUD-101")])
     unphased = issue("RHCLOUD-103")
     later_root = issue("RHCLOUD-104", labels=["phase:02"])
-    result = coordinator.evaluate(control, [first, unphased, later_root], {"rbac-config"}, CONFIG[2], False)
+    result = coordinator.evaluate(control, [first, unphased, later_root], {"rbac-config"}, CONFIG[2])
     assert any("RHCLOUD-103 has no phase label" in gap for gap in result["gaps"])
     assert not any("must relate" in gap for gap in result["gaps"])
     assert result["ready"] == []
@@ -163,7 +163,6 @@ def jira_store(monkeypatch):
     monkeypatch.setattr(actions, "load_project_repos", lambda: {"rbac-config": {}})
     monkeypatch.setattr(actions, "jira_call", jira_call)
     monkeypatch.setenv("BOT_LABEL", CONFIG[0])
-    monkeypatch.setenv("BOT_INCLUDE_BACKLOG", "false")
     return store, writes
 
 
@@ -183,7 +182,7 @@ def test_handoff_rechecks_team(jira_store):
     assert len(writes) == write_count
 
 
-def test_handoff_recognizes_unassigned_placeholder_and_requires_active_sprint(jira_store):
+def test_handoff_recognizes_unassigned_placeholder_without_sprint(jira_store):
     store, writes = jira_store
     child = store["RHCLOUD-102"]
     request = {"control_key": "RHCLOUD-101", "ticket_key": "RHCLOUD-102", "repos": ["rbac-config"]}
@@ -192,17 +191,13 @@ def test_handoff_recognizes_unassigned_placeholder_and_requires_active_sprint(ji
         actions.handoff(request, CONFIG)
     child["fields"]["assignee"] = {"displayName": "Unassigned"}
     child["fields"]["customfield_10020"] = None
-    with pytest.raises(ValueError, match="outside the active sprint"):
-        actions.handoff(request, CONFIG)
-
-    child["fields"]["customfield_10020"] = [{"id": 1, "state": "ACTIVE"}]
     result = actions.handoff(request, CONFIG)
     assert result["ticket_key"] == "RHCLOUD-102"
     assert child["fields"]["assignee"] == {"displayName": "Unassigned"}
     assert any(name == "jira_update_issue" for name, _ in writes)
 
 
-def test_approved_setup_applies_repo_and_phase_labels_without_issue_links(jira_store, monkeypatch):
+def test_approved_setup_labels_and_starts_implementation_without_issue_links(jira_store, monkeypatch):
     store, writes = jira_store
     control = store["RHCLOUD-101"]
     control["fields"]["labels"] = ["dev-bot-coordinator", "dev-bot-coordinator:needs-plan"]
@@ -222,7 +217,7 @@ def test_approved_setup_applies_repo_and_phase_labels_without_issue_links(jira_s
             + json.dumps(proposal)
             + "\n```",
         },
-        {"id": "701", "body": "Approved"},
+        {"id": "701", "body": "I preapproved this proposal after review."},
     ]
     monkeypatch.setattr(actions, "review_context", lambda: {
         "review_label": "dev-bot-review",
@@ -236,9 +231,13 @@ def test_approved_setup_applies_repo_and_phase_labels_without_issue_links(jira_s
     )
     assert result["repository"] == "insights-rbac"
     assert result["phase_labels_updated"] == ["RHCLOUD-102", "RHCLOUD-103"]
+    assert result["handed_off"] == ["RHCLOUD-102"]
+    assert result["handoff_failures"] == []
+    assert result["next_action"] == "report_handoff_results"
     assert "root_links_added" not in result
     assert "repo:insights-rbac" in control["fields"]["labels"]
-    assert child["fields"]["labels"] == ["phase:01"]
+    assert "dev-bot-coordinator:active" in control["fields"]["labels"]
+    assert set(child["fields"]["labels"]) == {"phase:01", "repo:insights-rbac", CONFIG[2]}
     assert later["fields"]["labels"] == ["phase:02"]
     assert not any(name == "jira_create_issue_link" for name, _ in writes)
 

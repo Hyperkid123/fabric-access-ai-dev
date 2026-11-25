@@ -19,4 +19,3 @@ requires:
     - BOT_IMPLEMENTATION_LABEL
   optional_env_vars:
     - BOT_JIRA_PROJECT
-    - BOT_INCLUDE_BACKLOG
