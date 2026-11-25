@@ -60,8 +60,10 @@ that pipeline.
 ## Catalog
 
 Add guides under `reviewers/` and register their paths, attribution, and
-applicability in `dimensions.yaml`. Set `model_preference` to `terra` or
-`luna`. An omitted preference uses Terra. The planner includes applicable
+applicability in `dimensions.yaml`. Most dimensions set `model_preference` to
+`terra` or `luna`; the `package-upgrades` preference selects its dedicated
+Luna reviewer, which can inspect official upstream release notes. An omitted
+preference uses Terra. The planner includes applicable
 default entries for the selected level and always includes required repository
 skills. `--focus` selects explicit dimensions plus those required skills
 when preparing a review plan. Dynamic guides come from configured,

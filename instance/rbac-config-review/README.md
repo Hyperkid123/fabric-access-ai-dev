@@ -229,8 +229,11 @@ run. The default can also be changed in `dimensions.yaml`.
 The catalog also defines `package_upgrade_profile`. A dependency-manifest-only
 diff selects just `package-upgrades` and the existing
 `cross-repo-dependencies` dimension, plus any repository-required skills. The
-package reviewer checks application compatibility and evidence-backed CVE
-claims; the cross-repository pass checks declared consumers. Mixed diffs keep
+dedicated Luna package reviewer checks official changelogs between the old and
+new versions, traces breaking changes to application use, and verifies CVE
+affected/fixed ranges against advisories. The verifier checks release-note
+URLs cited by package findings; the cross-repository pass checks declared
+consumers. Mixed diffs keep
 the ordinary applicable dimensions and add both package passes. Explicit
 focused runs keep their requested selection. The full-review risk assessor,
 missing-context detector, and verifier still run, so the reduced cost comes
@@ -238,6 +241,15 @@ from fewer dimension workers while preserving the standard review pipeline.
 Both package-specific passes must complete before a clean result or the
 `dev-bot-review-approved` label can be published; a failed pass leaves the task
 retryable instead of treating the remaining pass as sufficient.
+
+The `documentation_only_profile` applies when every changed file uses a
+documentation suffix and the run has no explicit focus. It selects only
+`documentation`, `cross-repo-dependencies`, and `architecture`, plus any
+repository-required skills. This checks wording against the change, declared
+cross-repository sharing, and design boundaries without launching the full
+default dimension set. Mixed documentation and code changes keep normal level
+selection. The risk assessor and missing-context check still run for a full
+review; verification runs only when findings or fixes need checking.
 
 ### Dimension entries
 
@@ -257,8 +269,9 @@ Each item under `dimensions` describes one review pass. Common fields are:
   `plugin` and `repo` fields identify its source attribution.
 - **`model_preference`** (optional): routes the pass using
   `config.model_routing` in `dimensions.yaml`. `terra` runs in the read-only
-  `review-terra` subagent and `luna` runs in the read-only `review-luna`
-  subagent. A missing preference uses the configured Terra default.
+  `review-terra` subagent, `luna` runs in the read-only `review-luna` subagent,
+  and `package-upgrades` uses its dedicated read-only Luna reviewer. A missing
+  preference uses the configured Terra default.
   `build_context.py` resolves each selected pass to `review_agent` in
   `review_plan`; passes run in batches of at most four concurrent workers, and
   an unavailable worker is recorded as a failure instead of silently
@@ -310,18 +323,18 @@ enabled for a repository through its `skills` list.
 
 ### Selection precedence
 
-1. Start with the configured level (currently `high`) unless a run supplies an
-   override.
-2. Automatically select default-enabled dimensions included by that level and
-   applicable to the changed languages and paths.
-3. Skip dimensions marked `skip_documentation_only` when the change contains
-   only documentation.
-4. Add the repository's `skills` unconditionally. A focused run (`--focus`)
-   selects the focused dimensions plus repository skills; the focus list
-   replaces ordinary automatic level selection for that run.
-5. Remove duplicates and run selected passes in plan-ordered batches of at most
-   four concurrent workers. A verifier then challenges proposed findings
-   before publication.
+1. An explicit `--focus` uses the named dimensions and repository-required
+   skills.
+2. Otherwise, select `package_upgrade_profile` for dependency-manifest-only
+   diffs or `documentation_only_profile` when every changed file is
+   documentation.
+3. For other changes, start with the configured level (currently `high`) and
+   select default-enabled dimensions applicable to the changed languages and
+   paths, skipping any marked `skip_documentation_only` for documentation-only
+   changes.
+4. Add the repository's `skills` unconditionally and remove duplicates.
+5. Run selected passes in plan-ordered batches of at most four concurrent
+   workers. A verifier then challenges proposed findings before publication.
 
 ## How a review runs
 
@@ -334,10 +347,10 @@ flowchart TD
     Clear --> Context["2. Pin review context<br/>diff, checkout, related repos, docs<br/>AI cost: $0"]
     Queue -->|verification, reply, or resume| Context
     Context --> Snapshot["manifest.json<br/>impact.json"]
-    Snapshot --> Select["3. Select review profile<br/>dependency-only: 2 focused passes<br/>otherwise: applicable dimensions<br/>AI cost: $0"]
+    Snapshot --> Select["3. Select review profile<br/>docs-only: 3 focused passes<br/>dependency-only: 2 focused passes<br/>otherwise: applicable dimensions<br/>AI cost: $0"]
     Select --> Runner["Terra review-runner<br/>one orchestration session, multiple turns"]
     Runner --> Risk["Luna risk assessor<br/>first subagent on full reviews"]
-    Risk --> Workers["4. Dimension AI passes<br/>2 for package-only; otherwise applicable dimensions"]
+    Risk --> Workers["4. Dimension AI passes<br/>3 for docs-only; 2 for package-only<br/>otherwise applicable dimensions"]
     Workers --> Results["Per-dimension JSON<br/>findings + pass status"]
     Results --> Merge["5. Python merges results<br/>deduplicate + consensus rank<br/>AI cost: $0"]
     Merge --> Detector["Terra missing-context check<br/>one detect pass; more if answers arrive<br/>medium context: snapshot + pass results"]
@@ -575,9 +588,10 @@ inline and review body requests receive a top-level answer linked to their
 source. Up to five requests are answered per cycle; remaining requests stay
 queued for later cycles. A new top-level PR comment containing exactly
 `/review-bot re-review` asks for approval; it does not start a review. The bot
-posts a structured request with a revision-bound approval ID and separate
-bullet options. Any verified member of the repository's GitHub organization
-can reply `Review bot: yes <RA-ID>` or `Review bot: no <RA-ID>`. The bot applies
+keeps one approval comment per PR, editing it with a new request ID for a new
+re-review command or changed revision. Any verified member of the repository's
+GitHub organization can reply `Review bot: yes <RA-ID>` or
+`Review bot: no <RA-ID>`. The bot applies
 `dev-bot-review-waiting-for-approval` while it waits and removes it after a
 verified yes or no. A verified yes starts the pass and preserves finding IDs
 while incrementing the review number in the summary. A new top-level
