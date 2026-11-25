@@ -10,9 +10,10 @@ verified ledger has no open findings; it does not submit an `APPROVE` review.
 It also
 posts one idempotent inline thread per actionable finding, using the same
 finding ID in the summary and inline comment. The summary has a one-sentence
-purpose statement, affected-area bullets from the pinned diff, a
-revision-specific Change risk section, and a Findings table with plain-text IDs, severity, dimension, resolution state, and a
-separate link to each inline thread.
+purpose statement, a complete human-readable bullet list of affected areas, a
+revision-specific Change risk section written as bullets, and a compact
+`ID | Status | Finding` table. Severity, dimensions, and inline-thread links
+share the Finding cell so IDs and headings stay easy to scan.
 Scenario steps and their expected and actual results, evidence, and fixes stay
 in the inline comments. The summary ends
 with contextual-answer, learning-extraction, re-review, and verification commands. Its hidden
@@ -558,23 +559,33 @@ has a documentation mismatch:
 ## Example comments
 
 Status review template (the publisher replaces `review-comment:F1` with the
-GitHub URL of the inline thread; finding IDs remain plain text):
+GitHub URL of the inline thread; finding IDs use code styling to avoid wrapping):
 
 ```markdown
 ## Review 2
 
 This PR aligns the documented role response with the fields returned by the handler.
 
+### Affected areas
+
+- **RBAC management APIs and data models** (`rbac/management/`; 3 changed files)
+- **Project documentation** (`docs/`; 2 changed files)
+
 ### Change risk
 
-**Risk:** `medium-risk` — The change updates a client-visible response contract, so existing consumers may need to adapt.
+**Risk:** `medium-risk`
 
-### Findings (2 total; 1 open, 1 addressed)
+- The change updates a client-visible response contract.
+- Existing consumers may need to adapt.
 
-| ID | Severity | Dimension | Status | Inline comment |
-|---|---|---|---|---|
-| F1 | blocking | correctness | open | [Open thread](review-comment:F1) |
-| F2 | nit | documentation | addressed | [Open thread](review-comment:F2) |
+### Findings (4 total; 1 accepted, 1 rejected, 1 addressed, 1 follow-up)
+
+| ID | Status | Finding |
+|---|---|---|
+| `F1` | Accepted | **blocking** · correctness — [Thread](review-comment:F1) |
+| `F2` | Rejected | **suggestion** · architecture — Verifier refuted the proposed claim. |
+| `F3` | Addressed | **nit** · documentation — [Thread](review-comment:F3) |
+| `F4` | Follow-up | **blocking** · cross-repo-dependencies — [Thread](review-comment:F4) |
 
 ---
 
@@ -693,8 +704,10 @@ bot_status_update(instance_id="fabric-access-review", state="idle",
   one — there is at most one review summary per PR. The inline publisher
   upserts comments by finding ID for the current head, so retries do not
   duplicate a thread. Summary headings use `Review N` (without `#N`), followed
-  by a short PR-purpose sentence and a Findings table. Finding IDs stay plain
-  text; each row has a separate inline-comment link. Inline
+  by a short PR-purpose sentence, every affected area as a readable bullet, a
+  bullet-point risk summary, and a compact Findings table. Finding IDs use
+  code styling to avoid wrapping; each row shows its status and puts severity,
+  dimensions, and any inline-comment link in one Finding cell. Inline
   comments start with the same ID; custom formats preserve their selected
   skill's detailed layout. GitHub may create separate review records for inline
   comments; the tracked `review_id` remains the summary review's ID. A

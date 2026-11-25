@@ -414,6 +414,84 @@ def summarize_child(issue: dict) -> dict:
     }
 
 
+def ticket_plan_snapshot(
+    children: list[dict],
+    team_field_id: str,
+    implementation_label: str,
+) -> dict[str, dict]:
+    """Capture same-Team ticket fields that can change the approved plan."""
+    snapshot = {}
+    for issue in sorted(children, key=key_of):
+        blockers, related = linked_issues(issue)
+        issue_labels = labels(issue)
+        priority = value(issue, "priority") or {}
+        issue_type = value(issue, "issuetype") or value(issue, "issue_type") or {}
+        snapshot[key_of(issue)] = {
+            "summary": str(value(issue, "summary") or "").strip(),
+            "description": str(value(issue, "description") or ""),
+            "updated": str(value(issue, "updated") or ""),
+            "status": status_name(issue),
+            "assignee": is_assigned(value(issue, "assignee")),
+            "priority": str(priority.get("name") or priority.get("id") or "")
+            if isinstance(priority, dict) else str(priority),
+            "issue_type": str(issue_type.get("name") or "")
+            if isinstance(issue_type, dict) else str(issue_type),
+            "team_id": team_id(issue, team_field_id),
+            "labels": sorted(issue_labels),
+            "phase_labels": sorted(label for label in issue_labels if PHASE_RE.fullmatch(label)),
+            "repo_labels": sorted(label for label in issue_labels if label.startswith("repo:")),
+            "planning_labels": sorted(
+                label for label in issue_labels
+                if not PHASE_RE.fullmatch(label)
+                and not label.startswith("repo:")
+                and not label.startswith("dev-bot-coordinator:")
+            ),
+            "blockers": sorted(blockers),
+            "related": sorted(related),
+        }
+    return snapshot
+
+
+def ticket_plan_changes(previous: object, current: dict[str, dict]) -> dict:
+    """Compare ticket membership and plan-relevant fields with the last scan."""
+    if not isinstance(previous, dict):
+        return {
+            "baseline_missing": True,
+            "added": [],
+            "removed": [],
+            "changed": [],
+        }
+    old_keys, new_keys = set(previous), set(current)
+    added = [{"key": key, "ticket": current[key]} for key in sorted(new_keys - old_keys)]
+    removed = [{"key": key, "ticket": previous[key]} for key in sorted(old_keys - new_keys)]
+    changed = []
+    for key in sorted(old_keys & new_keys):
+        old_ticket = previous[key]
+        new_ticket = current[key]
+        if not isinstance(old_ticket, dict):
+            changed.append({"key": key, "fields": {"ticket": {"before": old_ticket, "after": new_ticket}}})
+            continue
+        fields_changed = {
+            field: {"before": old_ticket.get(field), "after": new_ticket.get(field)}
+            for field in sorted(set(old_ticket) | set(new_ticket))
+            if old_ticket.get(field) != new_ticket.get(field)
+        }
+        if fields_changed:
+            changed.append({"key": key, "fields": fields_changed})
+    return {
+        "baseline_missing": False,
+        "added": added,
+        "removed": removed,
+        "changed": changed,
+    }
+
+
+def ticket_plan_digest(snapshot: dict[str, dict]) -> str:
+    """Bind a published plan approval to the exact ticket state it described."""
+    raw = json.dumps(snapshot, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
 def evaluate(control: dict, children: list[dict], repo_names: set[str], implementation_label: str) -> dict:
     """Mechanical plan checks. The agent still judges requirement quality."""
     control_labels = labels(control)
@@ -516,7 +594,9 @@ def fingerprint(parent: dict, control: dict, children: list[dict], team_field_id
         "children": [
             {
                 "key": key_of(child), "summary": value(child, "summary"), "description": value(child, "description"),
-                "status": status_name(child), "team": team_id(child, team_field_id),
+                "updated": value(child, "updated"), "status": status_name(child), "team": team_id(child, team_field_id),
+                "priority": value(child, "priority"),
+                "issue_type": value(child, "issuetype") or value(child, "issue_type"),
                 "labels": sorted(labels(child)), "links": value(child, "issuelinks") or [],
                 "assignee": is_assigned(value(child, "assignee")),
             }
@@ -601,7 +681,19 @@ def main() -> None:
                 "errors": github_pr_errors,
             })
             task = tasks.get(control_key) or {}
-            old_digest = (task.get("metadata") or {}).get("snapshot_hash")
+            metadata = task.get("metadata") or {}
+            old_digest = metadata.get("snapshot_hash")
+            plan_snapshot = ticket_plan_snapshot(children, team_field_id, implementation_label)
+            plan_snapshot_hash = ticket_plan_digest(plan_snapshot)
+            ticket_changes = ticket_plan_changes(metadata.get("plan_snapshot"), plan_snapshot)
+            plan_approval_pending = bool(metadata.get("pending_plan_approval"))
+            approved_snapshot_changed = (
+                isinstance(metadata.get("approved_plan_snapshot_hash"), str)
+                and metadata["approved_plan_snapshot_hash"] != plan_snapshot_hash
+            )
+            has_ticket_delta = any(
+                ticket_changes[key] for key in ("added", "removed", "changed")
+            )
             if not old_digest or old_digest != digest or not assessment["state"] or github_pr_errors:
                 actionable.append({
                     "control_key": control_key,
@@ -609,6 +701,17 @@ def main() -> None:
                     "team_id": control_team_id,
                     "team_field_id": team_field_id,
                     "snapshot_hash": digest,
+                    "plan_snapshot": plan_snapshot,
+                    "plan_snapshot_hash": plan_snapshot_hash,
+                    "approved_plan_snapshot_hash": metadata.get("approved_plan_snapshot_hash"),
+                    "ticket_changes": ticket_changes,
+                    "approved_plan_snapshot_changed": approved_snapshot_changed,
+                    "plan_change_required": (
+                        has_ticket_delta
+                        or approved_snapshot_changed
+                        or plan_approval_pending
+                    ),
+                    "plan_approval_pending": plan_approval_pending,
                     "first_run": not bool(old_digest),
                     "new_comments": [
                         {"id": str(comment.get("id") or ""), "body": comment_body(comment), "created": comment.get("created")}

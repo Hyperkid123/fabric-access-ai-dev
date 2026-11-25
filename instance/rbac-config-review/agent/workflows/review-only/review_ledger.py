@@ -84,8 +84,9 @@ def _reference(value: object, field: str) -> dict:
 def public_ledger(ledger: object) -> list[dict]:
     """Keep only resume data already represented in public review comments.
 
-    Raw source lines, verifier notes, and status-evidence prose are omitted.
-    Addressed findings become tombstones so their IDs are never reused.
+    Raw source lines and status-evidence prose are omitted. Rejected entries
+    retain their verifier reason because it appears in the public status table.
+    Addressed and rejected entries become tombstones so IDs are never reused.
     """
     if not isinstance(ledger, list):
         raise LedgerError("Ledger must be an array")
@@ -100,8 +101,8 @@ def public_ledger(ledger: object) -> list[dict]:
             raise LedgerError(f"{field}.id must be unique and use F1, F2, ... format")
         seen.add(ident)
         status = entry.get("status", "open")
-        if not isinstance(status, str) or status not in {"open", "addressed"}:
-            raise LedgerError(f"{field}.status must be open or addressed")
+        if not isinstance(status, str) or status not in {"open", "addressed", "rejected"}:
+            raise LedgerError(f"{field}.status must be open, addressed, or rejected")
         severity = entry.get("severity") or "not recorded"
         if not isinstance(severity, str) or not severity.strip():
             raise LedgerError(f"{field}.severity must be text")
@@ -122,9 +123,12 @@ def public_ledger(ledger: object) -> list[dict]:
         for key in ("first_flagged_sha", "last_checked_sha"):
             if key in entry:
                 public[key] = _sha(entry[key], f"{field}.{key}")
+        if status == "rejected":
+            note = _text(entry.get("status_note"), f"{field}.status_note")
+            public["status_note"] = note
 
         ensure_public_content(json.dumps(public, ensure_ascii=False), f"Ledger finding {ident}")
-        if status == "addressed":
+        if status in {"addressed", "rejected"}:
             output.append(public)
             continue
 

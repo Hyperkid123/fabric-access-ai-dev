@@ -23,6 +23,22 @@ class EvidenceError(ValueError):
 
 _SEVERITIES = {"blocking", "suggestion", "nit", "question"}
 _REFERENCE_ID = re.compile(r"R[1-9]\d*")
+_AREA_DESCRIPTIONS = {
+    ".": "Repository-level files and project configuration",
+    "deploy": "Deployment configuration",
+    "docs": "Project documentation",
+    "rbac/core": "Core RBAC authorization and permission checks",
+    "rbac/management": "RBAC management APIs and data models",
+    "rbac/rbac": "RBAC application and policy layer",
+    "scripts/debezium": "Debezium event processing and integration scripts",
+    "scripts/local_ryw_test": "Local read-your-write test tooling",
+}
+_AREA_WORDS = {
+    "api": "API", "aws": "AWS", "ci": "CI", "cd": "CD", "cve": "CVE",
+    "db": "database", "e2e": "end-to-end", "http": "HTTP", "jwt": "JWT",
+    "k8s": "Kubernetes", "rbac": "RBAC", "ryw": "read-your-write",
+    "sql": "SQL", "ui": "UI",
+}
 
 
 def required_text(value: object, field: str) -> str:
@@ -347,7 +363,8 @@ def validate_findings(data: object, manifest: dict, impact: dict) -> list[dict]:
     return validated
 
 
-def confirmed(findings: list[dict], data: object) -> list[dict]:
+def classify_findings(findings: list[dict], data: object) -> tuple[list[dict], list[dict]]:
+    """Separate confirmed findings from verifier-rejected candidates."""
     if not isinstance(data, dict) or not isinstance(data.get("verdicts"), list):
         raise EvidenceError("Expected verifier verdicts array")
     verdicts = data["verdicts"]
@@ -364,7 +381,21 @@ def confirmed(findings: list[dict], data: object) -> list[dict]:
         by_id[ident] = verdict
     if set(by_id) != {finding["id"] for finding in findings}:
         raise EvidenceError("Verifier must return exactly one verdict per finding")
-    return [finding for finding in findings if by_id[finding["id"]]["status"] == "confirmed"]
+    accepted = [finding for finding in findings if by_id[finding["id"]]["status"] == "confirmed"]
+    rejected = [
+        {
+            **finding,
+            "status": "rejected",
+            "status_note": by_id[finding["id"]]["reason"],
+        }
+        for finding in findings
+        if by_id[finding["id"]]["status"] == "refuted"
+    ]
+    return accepted, rejected
+
+
+def confirmed(findings: list[dict], data: object) -> list[dict]:
+    return classify_findings(findings, data)[0]
 
 
 def render_inline_comments(findings: list[dict]) -> list[dict]:
@@ -434,7 +465,7 @@ def _inline_code(value: str) -> str:
 
 
 def affected_area_lines(manifest: dict) -> list[str]:
-    """List compact, deterministic areas derived from the pinned changed paths."""
+    """Describe every changed area in readable bullets from pinned impact data."""
     impact_path = manifest.get("impact_path")
     if not isinstance(impact_path, str):
         return ["- Changed-path details are unavailable."]
@@ -481,22 +512,48 @@ def affected_area_lines(manifest: dict) -> list[str]:
             grouped.setdefault(area, []).append(filename)
             continue
         parent_parts = parsed.parent.parts
-        area = "/".join(parent_parts[:2]) + "/" if parent_parts else "Repository root files"
+        area = "/".join(parent_parts[:2]) + "/" if parent_parts else "."
         grouped.setdefault(area, []).append(path)
 
     lines: list[str] = []
-    for area in sorted(grouped)[:8]:
+    for area in sorted(grouped, key=lambda item: (item != ".", item)):
         items = sorted(set(grouped[area]))
+        description = _AREA_DESCRIPTIONS.get(area.rstrip("/"))
+        if description is None:
+            words = [
+                " ".join(_AREA_WORDS.get(word.casefold(), word.title())
+                         for word in re.split(r"[-_]+", component))
+                for component in area.rstrip("/").split("/")
+                if component != "."
+            ]
+            description = " / ".join(words) if words else _AREA_DESCRIPTIONS["."]
+            if area.startswith("scripts/"):
+                description = "Scripts for " + " / ".join(words[1:] or words)
+            elif area.startswith("rbac/"):
+                description = "RBAC " + " / ".join(words[1:] or words)
+            elif area.startswith("docs/"):
+                description = "Documentation for " + " / ".join(words[1:] or words)
+            elif area.startswith("tests/"):
+                description = "Test coverage for " + " / ".join(words[1:] or words)
+            elif area.startswith("deploy/"):
+                description = "Deployment setup for " + " / ".join(words[1:] or words)
+            elif area.startswith("instance/"):
+                description = "Bot instance " + " / ".join(words[1:] or words)
         if area in dependency_groups:
+            parent, separator, ecosystem = area.partition(" — ")
+            description = ecosystem if separator else area
+            location = f"`{parent}/`" if separator else "repository root"
             shown = ", ".join(_inline_code(name) for name in items[:4])
             if len(items) > 4:
                 shown += f", and {len(items) - 4} more"
-            lines.append(f"- {_inline_code(area)}: {shown}")
+            lines.append(f"- **{description}** ({location}): {shown}")
         else:
+            location = "repository root" if area == "." else f"`{area.rstrip('/')}/`"
             count = len(items)
-            lines.append(f"- {_inline_code(area)} ({count} changed {'file' if count == 1 else 'files'})")
-    if len(grouped) > 8:
-        lines.append(f"- {len(grouped) - 8} additional areas not listed.")
+            lines.append(
+                f"- **{description}** ({location}; {count} changed "
+                f"{'file' if count == 1 else 'files'})"
+            )
     return lines
 
 
@@ -556,20 +613,40 @@ def table_cell(value: object) -> str:
     return text.replace("|", "&#124;") or "—"
 
 
+def finding_disposition(item: dict) -> str:
+    status = str(item.get("status", "open"))
+    if status == "open":
+        return "Follow-up" if item.get("category") == "cross_repo" else "Accepted"
+    return {
+        "addressed": "Addressed",
+        "rejected": "Rejected",
+        "follow-up": "Follow-up",
+    }.get(status, status.replace("_", " ").title())
+
+
 def findings_table(findings: list[dict]) -> list[str]:
     lines = [
-        "| ID | Severity | Dimension | Status | Inline comment |",
-        "|---|---|---|---|---|",
+        "| ID | Status | Finding |",
+        "|---|---|---|",
     ]
     if not findings:
-        lines.append("| — | — | — | No confirmed findings. | — |")
+        lines.append("| — | — | No confirmed findings. |")
         return lines
     for item in findings:
         ident = item["id"]
+        status = str(item.get("status", "open"))
+        disposition = finding_disposition(item)
+        finding = (
+            f"**{item.get('severity') or 'not recorded'}** · "
+            f"{dimension_label(item)}"
+        )
+        if status == "rejected":
+            if item.get("status_note"):
+                finding += f" — {table_cell(item['status_note'])}"
+        else:
+            finding += f" — [Thread](review-comment:{ident})"
         lines.append(
-            f"| {ident} | {table_cell(item.get('severity') or 'not recorded')} "
-            f"| {table_cell(dimension_label(item))} "
-            f"| {table_cell(item.get('status', 'open'))} | [Open thread](review-comment:{ident}) |"
+            f"| `{table_cell(ident)}` | {table_cell(disposition)} | {table_cell(finding)} |"
         )
     return lines
 
@@ -597,9 +674,16 @@ def _risk_section(assessment: dict | None) -> list[str]:
     if assessment is None:
         return []
     level = assessment["risk"]
+    explanation = " ".join(assessment["explanation"].split())
+    points = []
+    for item in re.split(r";\s*|(?<=[.!?])\s+(?=[A-Z0-9])", explanation):
+        point = item.strip().rstrip(".;")
+        if point:
+            points.append(point[0].upper() + point[1:] + ".")
     lines = [
         "### Change risk",
-        f"**Risk:** `{level}-risk` — {assessment['explanation']}",
+        f"**Risk:** `{level}-risk`",
+        *(f"- {point}" for point in points),
     ]
     if assessment.get("stale"):
         lines.append(
@@ -721,14 +805,17 @@ def confirm_verifications(verifications: list[dict], data: object) -> list[dict]
 
 
 def apply_ledger_updates(ledger: list[dict], new_findings: list[dict],
-                          resolved_verifications: list[dict], head_sha: str) -> list[dict]:
+                          resolved_verifications: list[dict], head_sha: str,
+                          rejected_findings: list[dict] | None = None) -> list[dict]:
     """Merge this cycle's re-checks and new findings into the persisted ledger."""
     by_id = {v["finding_id"]: v for v in resolved_verifications}
     ledger_ids = [entry["id"] for entry in ledger]
     if len(ledger_ids) != len(set(ledger_ids)):
         raise EvidenceError("Prior ledger contains duplicate finding IDs")
     prior_ids = set(ledger_ids)
-    reused_ids = sorted(prior_ids.intersection(finding["id"] for finding in new_findings))
+    new_ids = [finding["id"] for finding in new_findings]
+    new_ids.extend(finding["id"] for finding in rejected_findings or [])
+    reused_ids = sorted(prior_ids.intersection(new_ids))
     if reused_ids:
         raise EvidenceError(f"New findings reuse prior ledger IDs: {', '.join(reused_ids)}")
     updated: list[dict] = []
@@ -748,6 +835,17 @@ def apply_ledger_updates(ledger: list[dict], new_findings: list[dict],
         updated.append({
             **finding, "status": "open", "first_flagged_sha": head_sha,
             "last_checked_sha": head_sha, "status_evidence": None, "status_note": None,
+        })
+    for finding in rejected_findings or []:
+        updated.append({
+            "id": finding["id"],
+            "status": "rejected",
+            "severity": finding["severity"],
+            "source_dimensions": finding.get("source_dimensions", []),
+            "category": finding["category"],
+            "status_note": finding["status_note"],
+            "first_flagged_sha": head_sha,
+            "last_checked_sha": head_sha,
         })
     return updated
 
@@ -776,10 +874,16 @@ def link_evidence(explanation: str, refs: list[dict]) -> str:
 
 def compact_status_line(findings: list[dict]) -> str:
     """Summarize finding counts for the Findings heading."""
-    open_count = sum(item.get("status", "open") == "open" for item in findings)
-    addressed_count = sum(item.get("status") == "addressed" for item in findings)
-    return (f"Findings ({len(findings)} total; {open_count} open, "
-            f"{addressed_count} addressed)")
+    dispositions = [finding_disposition(item) for item in findings]
+    accepted_count = dispositions.count("Accepted")
+    rejected_count = dispositions.count("Rejected")
+    addressed_count = dispositions.count("Addressed")
+    follow_up_count = dispositions.count("Follow-up")
+    return (
+        f"Findings ({len(findings)} total; {accepted_count} accepted, "
+        f"{rejected_count} rejected, {addressed_count} addressed, "
+        f"{follow_up_count} follow-up)"
+    )
 
 
 def render_ledger(manifest: dict, ledger: list[dict], new_findings: list[dict],
@@ -1003,6 +1107,7 @@ def main() -> None:
                 verifications, json.loads(args.verification_verdicts.read_text())
             )
             new_ledger = apply_ledger_updates(ledger, [], resolved, manifest["pr"]["head_sha"])
+            rejected = []
             update_count = args.update_count
         else:
             if args.verification_command_id:
@@ -1010,9 +1115,11 @@ def main() -> None:
             findings_data = json.loads(args.findings.read_text())
             summary = validate_pr_summary(findings_data, manifest)
             findings = validate_findings(findings_data, manifest, impact)
-            accepted = confirmed(findings, json.loads(args.verdicts.read_text()))
+            accepted, rejected = classify_findings(findings, json.loads(args.verdicts.read_text()))
             if args.ledger is None:
-                new_ledger = apply_ledger_updates([], accepted, [], manifest["pr"]["head_sha"])
+                new_ledger = apply_ledger_updates(
+                    [], accepted, [], manifest["pr"]["head_sha"], rejected
+                )
                 update_count = 0
             else:
                 if not (args.verifications and args.verification_verdicts and args.ledger_output and args.update_count is not None):
@@ -1020,7 +1127,9 @@ def main() -> None:
                 ledger = json.loads(args.ledger.read_text()) if args.ledger.exists() else []
                 verifications = validate_verifications(json.loads(args.verifications.read_text()), ledger, manifest)
                 resolved = confirm_verifications(verifications, json.loads(args.verification_verdicts.read_text()))
-                new_ledger = apply_ledger_updates(ledger, accepted, resolved, manifest["pr"]["head_sha"])
+                new_ledger = apply_ledger_updates(
+                    ledger, accepted, resolved, manifest["pr"]["head_sha"], rejected
+                )
                 update_count = args.update_count + 1
         format_name = "standard" if args.verification_only else manifest.get("format", "standard")
         if format_name == "custom":
@@ -1030,6 +1139,7 @@ def main() -> None:
             if args.prepare_custom and not args.custom_format and not args.custom_verdict:
                 args.prepare_custom.write_text(json.dumps({
                     "pr_summary": summary, "findings": accepted,
+                    "rejected_findings": rejected,
                     "ledger": new_ledger, "update_count": update_count,
                     "review_number": update_count + 1, "format_skills": format_skills,
                     "skill_results": skill_results,
@@ -1053,7 +1163,7 @@ def main() -> None:
                                      last_verification, risk_assessment)
                 comments = []
             else:
-                body = (render_review(manifest, accepted, summary, risk_assessment)
+                body = (render_review(manifest, new_ledger, summary, risk_assessment)
                         if args.ledger is None else render_ledger(
                             manifest, new_ledger, accepted, update_count, summary,
                             risk_assessment=risk_assessment,
@@ -1064,13 +1174,30 @@ def main() -> None:
         ensure_public_content(body, "Status review")
         for comment in comments:
             ensure_public_content(comment["body"], f"Finding {comment['id']}")
-        args.publication_output.write_text(json.dumps({"body": body}, indent=2))
+        args.publication_output.write_text(json.dumps({
+            "body": body,
+            "rejected_findings": [
+                {
+                    "id": item["id"],
+                    "status": "rejected",
+                    "severity": item.get("severity", "not recorded"),
+                    "source_dimensions": item.get("source_dimensions", []),
+                    "category": item.get("category"),
+                    "reason": item.get("status_note"),
+                }
+                for item in new_ledger if item.get("status") == "rejected"
+            ],
+            "finding_statuses": [
+                {"id": item["id"], "status": finding_disposition(item)}
+                for item in new_ledger
+            ],
+        }, indent=2))
         if args.ledger_output:
             args.ledger_output.write_text(json.dumps(new_ledger, indent=2))
         if args.inline_comments_output:
             args.inline_comments_output.write_text(json.dumps(comments, indent=2))
         print(json.dumps({
-            "confirmed": len(accepted), "proposed": len(findings),
+            "confirmed": len(accepted), "rejected": len(rejected), "proposed": len(findings),
             "ledger_size": len(new_ledger), "update_count": update_count,
             "publication_file": str(args.publication_output),
             "ledger_file": str(args.ledger_output) if args.ledger_output else None,

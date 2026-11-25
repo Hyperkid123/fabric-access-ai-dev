@@ -4,19 +4,19 @@ This workflow does **not** poll Jira for new work. Personas live at `/home/botus
 
 ## PR title and Jira policy
 
-Every GitHub PR handled by this workflow MUST contain a Jira key in square brackets in its title:
+Every GitHub PR handled by this workflow MUST start with its Jira key in square brackets:
 
 ```
-feat: add new feature [RHCLOUD-12345]
+[RHCLOUD-12345] feat: add new feature
 ```
 
 The key must match `[PROJECT-12345]` (uppercase project key and numeric issue key). Check the title before implementing or updating a newly claimed PR.
 
-- If the title already contains a Jira key, use that issue and save it as task metadata `jira_key`.
+- If the title already contains a Jira key, use that issue and save it as task metadata `jira_key`. If the key is not the title prefix, move it to the prefix with `gh pr edit` before implementing.
 - If it does not, create one Jira Task that accurately reflects the PR's actual changes. Use `$BOT_JIRA_PROJECT` when set; otherwise use `RHCLOUD` for this instance. Include the PR URL, original title/body, changed files, and a concise implementation summary in the description.
 - Whenever this workflow creates a Jira issue, set its **Team** field to **Console Access** in the `jira_create_issue` call. Resolve the Team custom-field ID and required value format from Jira field options or an existing issue, then include it in the `additional_fields` JSON. If needed, find an existing RHCLOUD issue with Team = Console Access using `jira_search`, inspect it with `jira_get_issue(fields="*all")`, and reuse the Team custom-field key and value shape; confirm the option with `jira_get_field_options` when available. Preserve any other required `additional_fields` (such as a parent or epic link). Do not create the issue without the Team value; if it cannot be set, report the blocker.
 - Leave newly created Jira issues unassigned. Do not assign them to the PR author or bot, and do not call `jira_update_issue` for assignment.
-- After Jira creation, update the PR title with `gh pr edit` so the new key is present in square brackets. Do not create a second ticket on later cycles; first check the task metadata and current PR title.
+- After Jira creation, update the PR title with `gh pr edit` so the new key is the first title element in square brackets, followed by the original title with any old Jira-key suffix removed. Do not create a second ticket on later cycles; first check the task metadata and current PR title.
 - Reply on the PR with the created key and Jira URL, then continue normal PR work. Store the key with `task_update` metadata.
 
 This policy applies to both new and already-tracked PRs. A PR with a missing key is actionable work, not a reason to skip it.
