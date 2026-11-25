@@ -9,6 +9,10 @@ only conversation and status surface. Implementations stay with the existing
 
 - Preflight supplies `parent_key`, `control_key`, `team_id`, mechanical gaps,
   current phase, runnable tickets, new control comments, and a snapshot hash.
+  It also supplies `ticket_changes`, the current `plan_snapshot` and
+  `plan_snapshot_hash`, the last `approved_plan_snapshot_hash`, and whether a
+  plan revision is awaiting approval or current tickets differ from the approved
+  plan.
 - Work on **one control ticket per cycle**. Read its Team ID from the configured
   `$BOT_TEAM_FIELD_ID` field, store that ID in the task metadata, and include
   only direct children of its parent with that same Team ID. An issue for
@@ -46,6 +50,34 @@ status summary, followed by this table:
 **Current state:**
 - <concise project-wide status, counts, blockers, and questions>
 ```
+
+On every status check, inspect `plan_change_required`,
+`plan_approval_pending`, and `ticket_changes`. An added or removed same-Team
+ticket, or any changed ticket field in the snapshot, requires a plan revision.
+Reassess the complete ticket set, phases, dependencies, parallel work, and
+repository choices. Publish the changed ticket keys and fields, the revised
+plan table and sequence, and a complete `coordinator-setup` block containing
+the current `plan_snapshot_hash`. Set `dev-bot-coordinator:needs-plan` and
+mark `pending_plan_approval=true` in task metadata. Do not apply labels,
+activate the project, or hand off tickets while that revision is pending.
+If another ticket change appears while approval is pending, publish a refreshed
+revision with the new snapshot hash; approvals of the older revision no longer
+apply. If approval is pending and there is no newer ticket change, wait for a
+new user approval without reposting the same revision.
+
+Store the latest observed `plan_snapshot` and `plan_snapshot_hash` after every
+status check so the next check can identify further changes. Keep
+`approved_plan_snapshot_hash` bound to the last successfully approved plan; do
+not replace it with the latest observed hash while a revision awaits approval.
+A revision approval must be a new user comment after the published Plan
+revision. Call `approve-setup` without an inline `proposal`; the action reads the
+published block and rejects it if the ticket snapshot changed after
+publication. Only after that action succeeds, clear `pending_plan_approval` and
+save the returned current `plan_snapshot` and `approved_plan_snapshot_hash`.
+When an existing task has no saved plan snapshot, compare the current tickets
+with the latest published plan table; if the comparison finds a change or is
+uncertain, treat it as a plan revision and wait for approval. If it matches,
+initialize the approved hash from the current `plan_snapshot_hash`.
 
 Use Jira keys for dependencies, write `None` when there are none, and use a
 clear value such as `Undecided` when phase or repository is not yet known. Bold
@@ -97,6 +129,13 @@ coordinator never creates or changes Jira issue links.
    ```coordinator-setup
    {"repository":"insights-rbac","phase_assignments":{"phase:01":["RHCLOUD-123"]}}
    ```
+
+   A `Plan revision` comment uses that same block and adds the exact
+   `plan_snapshot_hash` from preflight:
+
+   ```coordinator-setup
+   {"repository":"insights-rbac","phase_assignments":{"phase:01":["RHCLOUD-123"]},"ticket_snapshot_hash":"<plan_snapshot_hash>"}
+   ```
 4. **New control comments**: when a new user comment contains `approve` or
    `approved` anywhere in its flattened body, treat it as one authorization to
    reread the latest Jira state, validate the setup, apply repository and phase
@@ -121,6 +160,16 @@ coordinator never creates or changes Jira issue links.
    `needs-plan` (or set `blocked` if an already-active project cannot progress)
    and comment with the specific missing information. A newer user comment
    after the approval must be processed before applying the approval.
+
+   Before applying any approval, inspect `plan_change_required` and
+   `ticket_changes`. If the check found added, removed, or changed tickets,
+   the approval predates the required Plan revision: publish the revision, set
+   `needs-plan`, save the current observed snapshot without changing the
+   approved hash, and wait for a new approval after that comment. If
+   `plan_approval_pending=true` and there is no newer ticket change, process a
+   new approval using the published Plan revision block, with no inline
+   proposal. The validated action enforces this and rejects handoff or
+   activation while the control ticket remains `needs-plan`.
 
    `/coord plan` rereads the current parent, control ticket, and every same-Team
    implementation ticket, then publishes a fresh plan using the template above.
@@ -162,7 +211,10 @@ coordinator never creates or changes Jira issue links.
    eligible tickets whether they are in a sprint, backlog, or no sprint. Never
    assign or move tickets to a sprint. If status, assignee, dependency, or repo
    scope blocks a ticket, report its exact reason and continue with other
-   eligible tickets. Do not assign the ticket to this coordinator.
+   eligible tickets. Pass the current `approved_plan_snapshot_hash` to every
+   `handoff`; after each successful handoff, use the returned hash for the
+   next one. The action rejects a handoff if Jira ticket state differs from the
+   approved snapshot. Do not assign the ticket to this coordinator.
    For every same-Team ticket already carrying the implementation label, run
    `label-review-prs` on every cycle. It finds open PRs in the ticket's selected
    upstream repos whose title contains the exact Jira key in brackets, then
@@ -194,7 +246,12 @@ coordinator never creates or changes Jira issue links.
    the action script verifies it.
 10. `task_update` the control task with `snapshot_hash` from preflight,
     `processed_comment_ids` for comments actually handled, `parent_key`,
-    `team_id`, and a short summary. The next cycle may wake once on the
+    `team_id`, `plan_snapshot`, `approved_plan_snapshot_hash`,
+    `pending_plan_approval`, and a short summary.
+    Use the preflight snapshot after a plan check, or the successful action's
+    snapshot after setup or handoff changes Jira labels. Keep
+    `pending_plan_approval=true` until an approved revision action succeeds.
+    The next cycle may wake once on the
     coordinator's own ticket-label changes; update the hash again and it will
     settle. Never mark an unhandled request comment processed.
 
@@ -212,8 +269,8 @@ Actions and required request keys:
 | Action | Keys in addition to `action`, `control_key` |
 |---|---|
 | `set-state` | `state` |
-| `approve-setup` | `request_comment_id` (new user comment containing `approve` or `approved`); `proposal` (fresh inline repository and phase assignment proposal) |
-| `handoff` | `ticket_key`, `repos` (list of repo names) |
+| `approve-setup` | `request_comment_id` (new user comment containing `approve` or `approved`); `proposal` for initial setup only; omit it for a published Plan revision |
+| `handoff` | `ticket_key`, `repos` (list of repo names), `approved_plan_snapshot_hash` |
 | `label-review-prs` | `ticket_key` (implementation ticket with the bot label) |
 | `create-ticket` | `request_comment_id`, `proposal_id`, `phase`, `summary`, `description` |
 | `comment` | `action_id`, `comment_type`, `body`, `next_steps` (one to five single-line suggestions) |
