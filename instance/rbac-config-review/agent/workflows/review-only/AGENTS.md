@@ -426,8 +426,13 @@ retryable.
 
    Then read `review_plan` from the manifest. `build_context.py` has already
    selected the passes and generated per-run skills for any selected recipe
-   dimensions using this bot's YAML processor. Load the general
-   explanatory-answer skill (`agent/skills/explanatory-answer/SKILL.md`).
+   dimensions using this bot's YAML processor.
+   When `review_plan.profile` is `documentation-only`, it deliberately contains
+   only documentation, cross-repository dependencies, and architecture (plus
+   any repository-required skills). Run exactly those listed passes; do not
+   add the ordinary high-level dimensions.
+   Load the general explanatory-answer skill
+   (`agent/skills/explanatory-answer/SKILL.md`).
    For this workflow, put its direct answer in `claim`, the concrete
    circumstance in `trigger`, the why and reasoning with pinned references
    in `evidence.explanation` and `evidence.refs`, the consequence in
@@ -910,9 +915,12 @@ A member can request another full review, even on the same commit, by posting
 a **new top-level PR conversation comment** whose entire text is
 `/review-bot re-review` (case-insensitive, surrounding whitespace allowed).
 Edits to old comments and inline replies are not commands. This command asks
-the bot to post an approval request; it does not start a review. A verified
-organization member must then reply `Review bot: yes <RA-ID>` to the marked
-request. A `no` response or no response leaves the PR waiting and does not
+the bot to request approval; it does not start a review. Keep one approval
+comment per PR: reuse it for repeated scans and edit it in place for a new
+re-review command or changed head/base. Each new request gets a new RA-ID, so
+replies to an older request cannot authorize it. A verified organization
+member must reply `Review bot: yes <RA-ID>` to the marked request. A `no`
+response or no response leaves the PR waiting and does not
 prevent other queued PRs from being processed. Head or base SHA changes follow
 the same approval flow. Only a newly observed GitHub `labeled` event for the
 configured review label starts a full review automatically. A label that is

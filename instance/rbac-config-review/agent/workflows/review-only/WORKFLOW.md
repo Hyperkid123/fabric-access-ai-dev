@@ -40,7 +40,7 @@ flowchart LR
         X --> B
         B --> P["Select review profile<br/>(review_skills.py)"]
         P --> R["Classify risk first<br/>(review-risk-assessor)"]
-        R --> C["Review<br/>(package-only: two focused passes;<br/>otherwise applicable dimensions)"]
+        R --> C["Review<br/>(docs-only: three focused passes;<br/>package-only: two focused passes;<br/>otherwise applicable dimensions)"]
         C --> M["Check missing context<br/>(missing-context-detector)"]
         M --> D["Verify<br/>(review-verifier)"]
         D --> E["Publish<br/>(comments, summary, risk + approval labels)"]
@@ -71,6 +71,7 @@ start a model session.
 | Context builder | `build_context.py` | Script | Checks out the PR head read-only, clones related repos at a pinned SHA, fetches configured Markdown docs at a pinned commit, writes `manifest.json` |
 | Skill preparation | `review_skills.py` | Script | Selects dimensions, reads selected recipe YAML at a pinned commit, and generates per-run review skills |
 | Package upgrade profile | `dimensions.yaml` + `review_skills.py` | Script | Routes dependency-manifest-only diffs to `package-upgrades` plus the existing `cross-repo-dependencies` pass; mixed diffs keep normal coverage and add both |
+| Documentation-only profile | `dimensions.yaml` + `review_skills.py` | Script | Routes documentation-only diffs to `documentation`, `cross-repo-dependencies`, and `architecture` instead of the full default dimension set |
 | Impact analysis | `impact_analysis.py` | Script | Deterministically (no LLM) extracts changed identifiers from the diff and `git grep`-matches them in related repos → `impact.json`'s `consumer_usages` (candidates, not confirmed breakage) |
 | PR command detection | `rereview_requests.py`, `review_bot_commands.py`, `review_queue.py` | Script | Finds exact verification/re-review commands and new `/review-bot` requests in top-level comments, inline threads, and submitted review bodies; the runner answers generic requests from pinned context after organization-membership checks |
 | Jira issue creation | `.opencode/agents/jira-ticket-creator.md`, `jira_config.py` | **AI** (subagent) + script | Handles an explicit Jira request or an authorized cross-repo follow-up using the target repository's App Interface profile and an idempotency marker |
@@ -111,10 +112,13 @@ Luna at high effort as the first subagent once per full review, after context
 is pinned and before dimension workers; it does not run for verification or
 comment replies. If a preferred worker fails, that dimension is recorded as
 failed instead of being silently rerun on another model.
-The high preset remains the default. For a documentation-only diff, dimensions
-marked `skip_documentation_only` do not run. Mixed code and documentation
-changes still select the full applicable set, and an explicitly selected skill
-always runs.
+The high preset remains the default. A documentation-only diff selects the
+`documentation_only_profile`: `documentation`, `cross-repo-dependencies`, and
+`architecture`, plus repository-required skills. These passes check the docs
+against the change, declared cross-repository sharing, and design boundaries.
+This avoids starting every default skill for a text-only change. Mixed code and
+documentation changes still select the full applicable set, and an explicit
+`--focus` uses its named dimensions plus repository-required skills.
 
 Dependency-manifest-only changes use the `package_upgrade_profile` instead of
 the high preset: only `package-upgrades` and `cross-repo-dependencies` run,
@@ -129,6 +133,10 @@ Both package-specific passes must complete before the bot can publish a clean
 result or add `dev-bot-review-approved`. If either pass fails or returns
 invalid output, leave the task retryable and report the failed pass; do not
 treat one pass's empty findings as a clean package review.
+
+The documentation-only profile reduces dimension workers only. The risk
+assessor and missing-context check still run for a full review, and the
+verifier runs when findings or fixes need checking.
 
 Each repository can list dimension names in `review-context.yaml` under
 `repositories.<repo-key>.skills`. These skills always run for that repository,
@@ -189,8 +197,10 @@ legacy-state reconciliation:
 4. **Authorization and capacity gates**: a new GitHub `labeled` event for the
    configured label authorizes a full review automatically. A currently
    present label without a new label event does not. Head/base changes and
-   re-review commands post one idempotent PR comment with a revision-bound
-   approval ID. Any member of the repository's GitHub organization can reply
+   re-review commands use one approval comment per PR. Repeated scans reuse
+   it; a new re-review command or changed head/base edits it in place with a
+   new request ID, so older replies cannot authorize the new request. Any
+   member of the repository's GitHub organization can reply
    `Review bot: yes <RA-ID>` or `Review bot: no <RA-ID>`. Only a verified yes
    response authorizes a full pass. Waiting or declining excludes that PR for
    this preflight run and the queue continues to other PRs. A brand-new review

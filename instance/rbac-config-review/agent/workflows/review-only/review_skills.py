@@ -237,6 +237,26 @@ def package_review_profile(catalog: dict, changed_files: list[str],
     return "mixed-package-upgrade", dimensions
 
 
+def documentation_only_profile(catalog: dict, changed_files: list[str],
+                               focus: list[str] | None) -> tuple[str, list[str]]:
+    """Use a small fixed review set when every changed path is documentation."""
+    if focus is not None or not changed_files or any(
+        not isinstance(path, str)
+        or Path(path).suffix.lower() not in DOCUMENTATION_SUFFIXES
+        for path in changed_files
+    ):
+        return "standard", []
+    config = catalog.get("documentation_only_profile")
+    if not isinstance(config, dict):
+        raise SkillError("dimensions.yaml documentation_only_profile must be a mapping")
+    dimensions = config.get("dimensions")
+    if (not isinstance(dimensions, list) or not dimensions
+            or any(not isinstance(name, str) for name in dimensions)
+            or len(set(dimensions)) != len(dimensions)):
+        raise SkillError("Invalid documentation-only review profile")
+    return "documentation-only", dimensions
+
+
 def prepare(manifest: dict, config: dict, output_dir: Path, focus: list[str] | None = None,
             level: str | None = None) -> dict:
     catalog = yaml.safe_load((SKILL_DIR / "dimensions.yaml").read_text())
@@ -252,12 +272,22 @@ def prepare(manifest: dict, config: dict, output_dir: Path, focus: list[str] | N
     repo_key = manifest["pr"].get("repo_key")
     required = config.get("repositories", {}).get(repo_key, {}).get("skills", [])
     profile, package_dimensions = package_review_profile(catalog, changed, focus)
+    documentation_dimensions: list[str] = []
+    if not package_dimensions:
+        documentation_profile, documentation_dimensions = documentation_only_profile(
+            catalog, changed, focus
+        )
+        if documentation_dimensions:
+            profile = documentation_profile
     selection_focus = focus
     selection_required = required
     if package_dimensions:
         selection_required = list(dict.fromkeys([*required, *package_dimensions]))
         if profile == "package-upgrade":
             selection_focus = package_dimensions
+    elif documentation_dimensions:
+        selection_focus = documentation_dimensions
+        selection_required = list(dict.fromkeys([*required, *documentation_dimensions]))
     selected = select(catalog, changed, chosen_level, selection_focus, selection_required)
     routed = [(item, model_route(item, catalog)) for item in selected]
     revisions: dict[tuple[str, str], str] = {}

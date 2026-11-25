@@ -46,6 +46,7 @@ PR_FIELDS = "number,title,url,headRefOid,baseRefOid,headRefName,isDraft,author,u
 PR_STATE_FIELDS = "state,mergedAt,closedAt,headRefOid,baseRefOid,updatedAt,url,title,headRefName"
 REVIEWABLE_BOT_AUTHORS = {"platex-rehor-bot"}
 APPROVAL_WAITING_LABEL = "dev-bot-review-waiting-for-approval"
+APPROVAL_MARKER = re.compile(r"<!-- dev-review-bot:review-approval:(RA-[0-9a-f]{12}) -->")
 
 
 def task_key(repo: str, number: int) -> str:
@@ -464,15 +465,66 @@ def _apply_review_label_event(item: dict, event: dict | None, task: dict | None)
         item["review_authorization"] = "approval_required"
 
 
-def _review_approval_id(chosen: dict, task: dict | None) -> str:
-    meta = _metadata(task or {})
+def _review_approval_id(chosen: dict) -> str:
+    """Bind approval to the revision and explicit re-review request, if any."""
     command_ids = chosen.get("rereview_comment_ids") or []
     trigger = "rereview:" + ",".join(str(item) for item in sorted(command_ids)) if command_ids else "revision"
     key = "|".join(str(value or "") for value in (
-        chosen["repo"], chosen["number"], meta.get("last_reviewed_sha"),
-        meta.get("last_reviewed_base_sha"), chosen["head_sha"], chosen["base_sha"], trigger,
+        chosen["repo"], chosen["number"], chosen["head_sha"], chosen["base_sha"], trigger,
     ))
     return "RA-" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
+
+
+def _approval_request_comments(comments: list[dict], bot_login: str) -> list[dict]:
+    """Find marked approval comments authored by this bot for the current PR."""
+    requests = []
+    for comment in comments:
+        user = comment.get("user") or {}
+        body = comment.get("body")
+        if (not isinstance(user, dict) or not isinstance(user.get("login"), str)
+                or user["login"].casefold() != bot_login.casefold()
+                or not isinstance(body, str)):
+            continue
+        marker = APPROVAL_MARKER.search(body)
+        if marker is None:
+            continue
+        created = _parse_timestamp(comment.get("created_at"))
+        ident = comment.get("id")
+        if (created is None or not isinstance(ident, int)
+                or isinstance(ident, bool) or ident <= 0):
+            continue
+        requests.append({
+            "created_at": created,
+            "comment_id": ident,
+            "approval_id": marker.group(1),
+        })
+    return sorted(requests, key=lambda item: (item["created_at"], item["comment_id"]))
+
+
+def _approval_request_body(chosen: dict, task: dict | None, approval_id: str) -> str:
+    if chosen.get("rereview_comment_ids"):
+        reason = "A re-review was requested without a new review-label event."
+    elif task and _metadata(task).get("last_reviewed_sha"):
+        reason = "The PR head or base changed since the last review."
+    else:
+        reason = "The configured review label has no new label-add event."
+    marker = f"<!-- dev-review-bot:review-approval:{approval_id} -->"
+    body = (
+        f"### Review approval required\n\n"
+        f"**Request:** `{approval_id}`\n\n"
+        f"**Reason:** {reason}\n\n"
+        "**Target revision**\n"
+        f"- **Head:** `{chosen['head_sha'][:12]}`\n"
+        f"- **Base:** `{chosen['base_sha'][:12]}`\n\n"
+        "No review will run until an organization member approves this exact revision.\n\n"
+        "**Reply with one option:**\n"
+        f"- `Review bot: yes {approval_id}` — approve and start the review.\n"
+        f"- `Review bot: no {approval_id}` — decline the review.\n\n{marker}"
+    )
+    return with_footer(
+        body, chosen["repo"], chosen["number"],
+        _status_review_url(_metadata(task or {}), chosen["repo"], chosen["number"]),
+    )
 
 
 def _api_status(result: subprocess.CompletedProcess) -> int | None:
@@ -537,59 +589,48 @@ def _set_approval_waiting_label(repo: str, number: int, present: bool) -> None:
 
 
 def _request_review_approval(chosen: dict, task: dict | None) -> dict:
-    """Ask for an organization member's approval, scoped to this revision."""
-    approval_id = _review_approval_id(chosen, task)
-    marker = f"<!-- dev-review-bot:review-approval:{approval_id} -->"
+    """Keep one approval comment per PR and bind it to the requested revision."""
+    approval_id = _review_approval_id(chosen)
     comments = fetch_comments(chosen["repo"], chosen["number"])
     bot_login = _bot_login()
-    requests = []
-    for comment in comments:
-        user = comment.get("user") or {}
-        if (isinstance(user, dict) and isinstance(user.get("login"), str)
-                and user["login"].casefold() == bot_login.casefold()
-                and isinstance(comment.get("body"), str) and marker in comment["body"]):
-            created = _parse_timestamp(comment.get("created_at"))
-            ident = comment.get("id")
-            if (created is not None and isinstance(ident, int)
-                    and not isinstance(ident, bool) and ident > 0):
-                requests.append((created, ident, comment))
-    if not requests:
-        if chosen.get("rereview_comment_ids"):
-            reason = "A re-review was requested without a new review-label event."
-        elif task and _metadata(task).get("last_reviewed_sha"):
-            reason = "The PR head or base changed since the last review."
-        else:
-            reason = "The configured review label has no new label-add event."
-        body = (
-            f"### Review approval required\n\n"
-            f"**Request:** `{approval_id}`\n\n"
-            f"**Reason:** {reason}\n\n"
-            "**Target revision**\n"
-            f"- **Head:** `{chosen['head_sha'][:12]}`\n"
-            f"- **Base:** `{chosen['base_sha'][:12]}`\n\n"
-            "No review will run until an organization member approves this exact revision.\n\n"
-            "**Reply with one option:**\n"
-            f"- `Review bot: yes {approval_id}` — approve and start the review.\n"
-            f"- `Review bot: no {approval_id}` — decline the review.\n\n{marker}"
+    all_requests = _approval_request_comments(comments, bot_login)
+    requests = [
+        request for request in all_requests
+        if request["approval_id"] == approval_id
+    ]
+    request_body = _approval_request_body(chosen, task, approval_id)
+    if not requests and all_requests:
+        # Rebind the existing approval comment to the new revision/request
+        # instead of adding another comment to the PR conversation.
+        reusable = all_requests[0]
+        result = subprocess.run(
+            ["gh", "api", f"repos/{chosen['repo']}/issues/comments/{reusable['comment_id']}",
+             "--method", "PATCH", "--field", f"body={request_body}"],
+            capture_output=True, text=True, timeout=30, check=False,
         )
-        body = with_footer(body, chosen["repo"], chosen["number"],
-                           _status_review_url(_metadata(task or {}), chosen["repo"], chosen["number"]))
+        if result.returncode:
+            raise RuntimeError(f"Cannot update review approval request: {result.stderr.strip()[:300]}")
+        _set_approval_waiting_label(chosen["repo"], chosen["number"], True)
+        return {"state": "waiting", "approval_id": approval_id}
+    if not requests:
         _set_approval_waiting_label(chosen["repo"], chosen["number"], True)
         result = subprocess.run(
             ["gh", "api", f"repos/{chosen['repo']}/issues/{chosen['number']}/comments",
-             "--method", "POST", "--field", f"body={body}"],
+             "--method", "POST", "--field", f"body={request_body}"],
             capture_output=True, text=True, timeout=30, check=False,
         )
         if result.returncode:
             raise RuntimeError(f"Cannot ask for review approval: {result.stderr.strip()[:300]}")
         return {"state": "waiting", "approval_id": approval_id}
 
-    request_at, request_id, _request_comment = min(requests, key=lambda item: (item[0], item[1]))
-    org = chosen["repo"].split("/", 1)[0]
+    request_at, request_comment_id = min(
+        (request["created_at"], request["comment_id"]) for request in requests
+    )
     response_pattern = re.compile(
         rf"Review bot:\s*(yes|no)\s+{re.escape(approval_id)}(?![A-Za-z0-9_-])",
         re.IGNORECASE,
     )
+    org = chosen["repo"].split("/", 1)[0]
     answers = []
     for comment in comments:
         user = comment.get("user") or {}
@@ -599,7 +640,7 @@ def _request_review_approval(chosen: dict, task: dict | None) -> dict:
         if (not isinstance(user, dict) or user.get("type") != "User"
                 or not isinstance(user.get("login"), str) or created is None
                 or not isinstance(ident, int) or isinstance(ident, bool)
-                or (created, ident) <= (request_at, request_id)
+                or (created, ident) <= (request_at, request_comment_id)
                 or not isinstance(body, str)):
             continue
         decisions = {match.group(1).casefold() for match in response_pattern.finditer(body)}
