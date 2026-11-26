@@ -24,6 +24,22 @@ conventional title. For example: `[RHCLOUD-12345] feat: add new feature`.
 Use the implementation ticket's exact key; do not append it after the title or
 use a different related ticket key.
 
+## Repository checkout and RBAC environment setup
+
+Use the task repository checkout under `./repos/<repo-name>/`; the agent
+workspace root is not the application repository. Before running
+`setup-rbac-env.sh` for `insights-rbac`, ensure `./repos/insights-rbac` exists
+and is a Git checkout. If it is missing, clone the configured
+`insights-rbac` `url` from `project-repos.json` into that path and add its
+configured `upstream` remote when absent. Preserve the task branch and any
+existing work; never reset or replace a checkout to fix this setup error.
+
+Run `instance/rbac-config/agent/scripts/setup-rbac-env.sh` with the explicit
+`./repos/insights-rbac` path (and `--no-env` when the task requires it). Do not
+run environment setup until the checkout is present and validated. If cloning
+fails or the checkout is incomplete, stop before making changes and report the
+exact path and error.
+
 ## Coordinator control tickets
 
 Never claim or implement a ticket labeled `dev-bot-control`, even if it also

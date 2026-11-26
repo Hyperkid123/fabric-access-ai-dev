@@ -1,6 +1,8 @@
 #!/bin/bash
 # Idempotent RBAC environment setup — run before working on insights-rbac.
 # Usage: setup-rbac-env.sh [--no-env] [path/to/insights-rbac]
+# Default checkout: ./repos/insights-rbac (or the current directory when run
+# from the root of an insights-rbac checkout).
 #
 # Handles: postgres/redis sidecar health checks, dependencies, migrations,
 # Celery worker (background daemon). Default mode configures .env; --no-env
@@ -20,7 +22,26 @@ if [ "$#" -gt 1 ]; then
     exit 2
 fi
 
-REPO_DIR="$(cd "${1:-.}" && pwd)"
+DEFAULT_REPO_DIR="./repos/insights-rbac"
+if [ "$#" -eq 0 ] && [ -f "./Pipfile" ] && [ -f "./rbac/manage.py" ]; then
+    DEFAULT_REPO_DIR="."
+fi
+REPO_PATH="${1:-$DEFAULT_REPO_DIR}"
+if [ ! -d "$REPO_PATH" ]; then
+    echo "[rbac-setup] ERROR: insights-rbac checkout not found at '$REPO_PATH'." >&2
+    echo "[rbac-setup] Clone the configured insights-rbac repository into ./repos/insights-rbac before retrying." >&2
+    exit 2
+fi
+if [ ! -f "$REPO_PATH/Pipfile" ] || [ ! -f "$REPO_PATH/rbac/manage.py" ]; then
+    echo "[rbac-setup] ERROR: '$REPO_PATH' is not an insights-rbac checkout (expected Pipfile and rbac/manage.py)." >&2
+    exit 2
+fi
+if ! git -C "$REPO_PATH" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "[rbac-setup] ERROR: '$REPO_PATH' is not a Git checkout." >&2
+    exit 2
+fi
+
+REPO_DIR="$(cd "$REPO_PATH" && pwd)"
 cd "$REPO_DIR"
 
 CELERY_PID=/tmp/celery-rbac-worker.pid

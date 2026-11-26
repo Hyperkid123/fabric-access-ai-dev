@@ -8,6 +8,7 @@ import hashlib
 import json
 import re
 from datetime import datetime, timezone
+from html import escape as html_escape
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
@@ -24,20 +25,35 @@ class EvidenceError(ValueError):
 _SEVERITIES = {"blocking", "suggestion", "nit", "question"}
 _REFERENCE_ID = re.compile(r"R[1-9]\d*")
 _AREA_DESCRIPTIONS = {
-    ".": "Repository-level files and project configuration",
-    "deploy": "Deployment configuration",
-    "docs": "Project documentation",
-    "rbac/core": "Core RBAC authorization and permission checks",
-    "rbac/management": "RBAC management APIs and data models",
-    "rbac/rbac": "RBAC application and policy layer",
-    "scripts/debezium": "Debezium event processing and integration scripts",
-    "scripts/local_ryw_test": "Local read-your-write test tooling",
+    ".": "Repository configuration and shared developer tooling",
+    "deploy": "Runtime deployment and rollout configuration",
+    "docs": "Project guides and operational documentation",
+    "rbac/core": "Core authorization checks and permission evaluation",
+    "rbac/management": "Management APIs and principal/group data models",
+    "rbac/rbac": "RBAC application behavior and policy enforcement",
+    "scripts/debezium": "Debezium event consumption and integration behavior",
+    "scripts/local_ryw_test": "Local read-your-write integration test tooling",
+    "scripts/validations": "API and workflow validation scenarios",
+    "tests/core": "Core authorization unit and integration tests",
+    "tests/management": "Management API, migration, and data-model tests",
+    "tests/rbac": "RBAC API and policy behavior tests",
 }
 _AREA_WORDS = {
     "api": "API", "aws": "AWS", "ci": "CI", "cd": "CD", "cve": "CVE",
     "db": "database", "e2e": "end-to-end", "http": "HTTP", "jwt": "JWT",
     "k8s": "Kubernetes", "rbac": "RBAC", "ryw": "read-your-write",
     "sql": "SQL", "ui": "UI",
+}
+_ROOT_FILE_DESCRIPTIONS = {
+    ".gitignore": "Version-control ignore rules",
+    ".pre-commit-config.yaml": "Pre-commit quality checks",
+    "contributing.md": "Contributor workflow and review guidance",
+    "dockerfile": "Container image build steps",
+    "makefile": "Build, validation, and developer commands",
+    "pyproject.toml": "Python packaging and tool configuration",
+    "readme.md": "Project overview and setup guidance",
+    "setup.cfg": "Python packaging and test configuration",
+    "tox.ini": "Python test and lint environments",
 }
 
 
@@ -515,45 +531,90 @@ def affected_area_lines(manifest: dict) -> list[str]:
         area = "/".join(parent_parts[:2]) + "/" if parent_parts else "."
         grouped.setdefault(area, []).append(path)
 
-    lines: list[str] = []
-    for area in sorted(grouped, key=lambda item: (item != ".", item)):
-        items = sorted(set(grouped[area]))
-        description = _AREA_DESCRIPTIONS.get(area.rstrip("/"))
-        if description is None:
+    categories: dict[str, list[tuple[str, str]]] = {}
+    root_files: dict[str, list[str]] = {}
+    for area, items in grouped.items():
+        normalized_area = area.rstrip("/")
+        if area in dependency_groups:
+            parent, separator, ecosystem = area.partition(" — ")
+            location = f"{parent}/" if separator else "repository root"
+            names = ", ".join(_inline_code(name) for name in sorted(set(items)))
+            description = f"{ecosystem} package versions ({names})"
+            categories.setdefault("Dependencies", []).append((description, location))
+            continue
+        if area == ".":
+            for path in sorted(set(items)):
+                filename = PurePosixPath(path).name
+                suffix = PurePosixPath(filename).suffix.casefold()
+                description = _ROOT_FILE_DESCRIPTIONS.get(filename.casefold())
+                if description is None:
+                    if suffix == ".md":
+                        description = "Project documentation"
+                    elif suffix in {".yaml", ".yml", ".toml", ".ini", ".cfg"}:
+                        description = "Project and tool configuration"
+                    elif suffix in {".py", ".sh"}:
+                        description = "Shared developer automation"
+                    else:
+                        description = "Shared project metadata and tooling"
+                root_files.setdefault(description, []).append(filename)
+            continue
+
+        parts = normalized_area.split("/")
+        top = parts[0]
+        descriptions = _AREA_DESCRIPTIONS.get(normalized_area)
+        if descriptions is None:
             words = [
                 " ".join(_AREA_WORDS.get(word.casefold(), word.title())
                          for word in re.split(r"[-_]+", component))
-                for component in area.rstrip("/").split("/")
-                if component != "."
+                for component in parts if component != "."
             ]
-            description = " / ".join(words) if words else _AREA_DESCRIPTIONS["."]
-            if area.startswith("scripts/"):
-                description = "Scripts for " + " / ".join(words[1:] or words)
-            elif area.startswith("rbac/"):
-                description = "RBAC " + " / ".join(words[1:] or words)
-            elif area.startswith("docs/"):
-                description = "Documentation for " + " / ".join(words[1:] or words)
-            elif area.startswith("tests/"):
-                description = "Test coverage for " + " / ".join(words[1:] or words)
-            elif area.startswith("deploy/"):
-                description = "Deployment setup for " + " / ".join(words[1:] or words)
-            elif area.startswith("instance/"):
-                description = "Bot instance " + " / ".join(words[1:] or words)
-        if area in dependency_groups:
-            parent, separator, ecosystem = area.partition(" — ")
-            description = ecosystem if separator else area
-            location = f"`{parent}/`" if separator else "repository root"
-            shown = ", ".join(_inline_code(name) for name in items[:4])
-            if len(items) > 4:
-                shown += f", and {len(items) - 4} more"
-            lines.append(f"- **{description}** ({location}): {shown}")
-        else:
-            location = "repository root" if area == "." else f"`{area.rstrip('/')}/`"
-            count = len(items)
-            lines.append(
-                f"- **{description}** ({location}; {count} changed "
-                f"{'file' if count == 1 else 'files'})"
-            )
+            descriptions = " / ".join(words) if words else _AREA_DESCRIPTIONS["."]
+            if top == "rbac":
+                descriptions = "RBAC " + " / ".join(words[1:] or words)
+            elif top == "tests":
+                descriptions = "Test coverage for " + " / ".join(words[1:] or words)
+            elif top == "scripts":
+                descriptions = "Scripts for " + " / ".join(words[1:] or words)
+            elif top == "docs":
+                descriptions = "Documentation for " + " / ".join(words[1:] or words)
+            elif top == "deploy":
+                descriptions = "Deployment setup for " + " / ".join(words[1:] or words)
+            elif top == "instance":
+                descriptions = "Bot instance " + " / ".join(words[1:] or words)
+
+        category = {
+            "rbac": "RBAC",
+            "tests": "Tests",
+            "scripts": "Scripts and integration tooling",
+            "docs": "Documentation",
+            "deploy": "Deployment",
+            "instance": "Bot configuration",
+        }.get(top, descriptions)
+        location = f"{normalized_area}/"
+        categories.setdefault(category, []).append((descriptions, location))
+
+    for description, filenames in root_files.items():
+        shown = ", ".join(_inline_code(name) for name in sorted(set(filenames)))
+        categories.setdefault("Repository configuration and tooling", []).append(
+            (f"{description} ({shown})", "repository root")
+        )
+
+    category_order = {
+        "RBAC": 0,
+        "Tests": 1,
+        "Documentation": 2,
+        "Deployment": 3,
+        "Scripts and integration tooling": 4,
+        "Dependencies": 5,
+        "Repository configuration and tooling": 6,
+        "Bot configuration": 7,
+    }
+    lines: list[str] = []
+    for category in sorted(categories, key=lambda item: (category_order.get(item, 99), item)):
+        lines.append(f"- **{category}**")
+        for description, location in sorted(set(categories[category])):
+            where = "repository root" if location == "repository root" else f"`{location}`"
+            lines.append(f"  - {description} ({where})")
     return lines
 
 
@@ -613,6 +674,16 @@ def table_cell(value: object) -> str:
     return text.replace("|", "&#124;") or "—"
 
 
+def nonbreaking_table_text(value: object) -> str:
+    """Prevent narrow GitHub table cells from splitting IDs and status words."""
+    text = " ".join(str(value).split()) or "—"
+    parts = [
+        "&#124;" if character == "|" else html_escape(character, quote=False)
+        for character in text
+    ]
+    return "&#8288;".join(parts)
+
+
 def finding_disposition(item: dict) -> str:
     status = str(item.get("status", "open"))
     if status == "open":
@@ -646,7 +717,8 @@ def findings_table(findings: list[dict]) -> list[str]:
         else:
             finding += f" — [Thread](review-comment:{ident})"
         lines.append(
-            f"| `{table_cell(ident)}` | {table_cell(disposition)} | {table_cell(finding)} |"
+            f"| <code>{nonbreaking_table_text(ident)}</code> | "
+            f"{nonbreaking_table_text(disposition)} | {table_cell(finding)} |"
         )
     return lines
 
