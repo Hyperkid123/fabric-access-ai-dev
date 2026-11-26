@@ -10,6 +10,8 @@ aligned during the rollback window.
   across the Fabric Access repositories in `project-repos.json`, pushing
   commits onto each labeled PR's existing head branch and addressing review
   comments. It does not poll Jira for new work.
+- The configured label is the sole eligibility signal. Do not exclude labeled
+  PRs based on the author account or head-branch name.
 - `$BOT_INSTANCE_ID` is required. Pass `instance_id` on `task_add`,
   `task_list`, `task_check_capacity`, `bot_status_update`, and
   `progress_store`, using an id distinct from the Jira (`rbac-config`) and

@@ -15,7 +15,7 @@ The key must match `[PROJECT-12345]` (uppercase project key and numeric issue ke
 - If the title already contains a Jira key, use that issue and save it as task metadata `jira_key`. If the key is not the title prefix, move it to the prefix with `gh pr edit` before implementing.
 - If it does not, create one Jira Task that accurately reflects the PR's actual changes. Use `$BOT_JIRA_PROJECT` when set; otherwise use `RHCLOUD` for this instance. Include the PR URL, original title/body, changed files, and a concise implementation summary in the description.
 - Whenever this workflow creates a Jira issue, set its **Team** field to **Console Access** in the `jira_create_issue` call. Resolve the Team custom-field ID and required value format from Jira field options or an existing issue, then include it in the `additional_fields` JSON. If needed, find an existing RHCLOUD issue with Team = Console Access using `jira_search`, inspect it with `jira_get_issue(fields="*all")`, and reuse the Team custom-field key and value shape; confirm the option with `jira_get_field_options` when available. Preserve any other required `additional_fields` (such as a parent or epic link). Do not create the issue without the Team value; if it cannot be set, report the blocker.
-- Leave newly created Jira issues unassigned. Do not assign them to the PR author or bot, and do not call `jira_update_issue` for assignment.
+- Leave newly created Jira issues unassigned. Never derive a Jira username from a GitHub login or attempt any Jira assignment. An absent assignee is expected success; do not report an assignment failure.
 - After Jira creation, update the PR title with `gh pr edit` so the new key is the first title element in square brackets, followed by the original title with any old Jira-key suffix removed. Do not create a second ticket on later cycles; first check the task metadata and current PR title.
 - Reply on the PR with the created key and Jira URL, then continue normal PR work. Store the key with `task_update` metadata.
 
@@ -41,16 +41,14 @@ Still NEVER:
 - To bring in the default branch, never rebase. If syncing is necessary and safe, merge the default branch into the PR branch and resolve conflicts in a new merge commit, preserving every existing PR commit. If the merge is unsafe or outside the PR's scope, stop and report the blocker.
 - Existing unsigned commits cannot be re-signed by this workflow. Report them as a blocker and leave those commits unchanged so the author can re-sign them.
 
-## Other-bot PRs (do not take these)
+## Labeled PR eligibility
 
-Preflight already skips them. If one appears in input anyway, skip it:
-
-| Owner | How to recognize | Who handles it |
-|---|---|---|
-| Jira sprint/kanban bot | branch starts with `bot/` **or** author is `$GH_USER_NAME` / `platex-rehor-bot` | `rbac-config` instance |
-| Konflux squash | branch starts with `chore/consolidate-` **or** author `red-hat-konflux[bot]` | `rbac-config-konflux` instance |
-
-This instance only works PRs whose `external_key` starts with `pr-label:`.
+The configured `$BOT_PR_LABEL` is the sole eligibility signal. Process every
+open PR returned by `gh pr list --label "$BOT_PR_LABEL"`, including PRs from
+bot authors and branches such as `bot/*` or `chore/consolidate-*`. Do not skip
+a labeled PR based on its author, branch name, or which bot may have created
+it. This instance only tracks tasks whose `external_key` starts with
+`pr-label:`.
 
 ## Workflow Loop
 

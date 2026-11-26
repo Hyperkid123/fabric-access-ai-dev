@@ -68,7 +68,7 @@ start a model session.
 
 | Piece | File | Script or AI | Role |
 |---|---|---|---|
-| Queue | `preflight/01-review-queue.py` → `review_queue.py` | Script | Picks one newly label-authorized review, approval-gated revision/re-review, feedback pass, or lifecycle reconciliation; checks unseen human comments before a feedback session |
+| Queue | `preflight/01-review-queue.py` → `review_queue.py` | Script | Scans configured repositories and candidate PRs with bounded concurrency; picks one newly label-authorized review, approval-gated revision/re-review, feedback pass, or lifecycle reconciliation; checks unseen human comments before a feedback session |
 | Config validation | `review_config.py` | Script | Loads and strictly validates `review-context.yaml` (GitHub URL shape, `.md`-only doc links, unique ids) |
 | Context builder | `build_context.py` | Script | Checks out the PR head read-only, clones related repos at a pinned SHA, fetches configured Markdown docs at a pinned commit, writes `manifest.json` |
 | Skill preparation | `review_skills.py` | Script | Selects dimensions, reads selected recipe YAML at a pinned commit, and generates per-run review skills |

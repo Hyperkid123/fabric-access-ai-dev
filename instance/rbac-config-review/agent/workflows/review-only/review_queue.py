@@ -896,6 +896,125 @@ def candidate(pr: dict, repo_key: str, repo: str, task: dict | None,
     }
 
 
+def _list_repo_prs(
+    repo_info: tuple[str, str], label: str,
+) -> tuple[str, str, list[dict] | None, str | None]:
+    repo_key, repo = repo_info
+    try:
+        return repo_key, repo, list_prs(repo, label), None
+    except (RuntimeError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
+        return repo_key, repo, None, str(exc)
+
+
+def _inspect_labeled_pr(
+    pr: dict, repo_key: str, repo: str, task: dict | None, review_label: str,
+) -> tuple[
+    dict | None,
+    tuple[dict, dict, str, str] | None,
+    list[str],
+]:
+    """Inspect one labeled PR without mutating queue-wide state."""
+    errors: list[str] = []
+    boundary_probe: tuple[dict, dict, str, str] | None = None
+    if task and task.get("status") in {"archived", "paused"}:
+        return None, None, errors
+
+    item = candidate(pr, repo_key, repo, task)
+    if item is None and task and task.get("status") in {"done", "pr_open"}:
+        # updatedAt has second precision: a new command can share the
+        # last-seen timestamp and otherwise never enter feedback_check.
+        probe = candidate(pr, repo_key, repo, task, pending_rereview=True)
+        meta = _metadata(task)
+        since, through = meta.get("last_seen_updated_at"), pr.get("updatedAt")
+        if probe and probe["kind"] == "feedback_check" and since and isinstance(through, str):
+            boundary_probe = (probe, meta, since, through)
+
+    if item and item["kind"] != "resume":
+        try:
+            label_event = _latest_review_label_event(repo, pr["number"], review_label)
+        except (RuntimeError, subprocess.TimeoutExpired, ValueError, json.JSONDecodeError) as exc:
+            errors.append(f"{repo}#{pr['number']}: cannot verify review-label event: {exc}")
+            # Fail closed when GitHub cannot confirm that the label was just
+            # added. Changed revisions still require approval.
+            if item["kind"] == "review":
+                item["review_authorization"] = "approval_required"
+        else:
+            _apply_review_label_event(item, label_event, task)
+
+    if item is None:
+        return None, boundary_probe, errors
+
+    meta = _metadata(task or {})
+    seen_feedback = meta.get("seen_feedback_comment_ids") or []
+    if not isinstance(seen_feedback, list) or any(not isinstance(ident, str) for ident in seen_feedback):
+        errors.append(f"{repo}#{pr['number']}: Invalid seen_feedback_comment_ids")
+        return None, boundary_probe, errors
+
+    since = meta.get("last_seen_updated_at") or meta.get("last_reviewed_at") or "1970-01-01T00:00:00Z"
+    command_scan_done = not (task and task.get("status") in COMMANDABLE)
+    try:
+        feedback = (
+            _fetch_pr_feedback(repo, pr["number"], since)
+            if task and task.get("status") in COMMANDABLE else None
+        )
+        command_requests = []
+        if task and task.get("status") in COMMANDABLE:
+            command_requests = _eligible_bot_commands(item, since, set(seen_feedback), feedback)
+            command_scan_done = True
+        if command_requests:
+            item["kind"] = "command_reply"
+            item["priority"] = 1
+            item["command_requests"] = command_requests
+            item["feedback_comment_ids"] = [request["feedback_id"] for request in command_requests]
+            item["task_status"] = task.get("status")
+            review_id = meta.get("review_id")
+            if type(review_id) is int and review_id > 0:
+                item["status_review_id"] = review_id
+            item.pop("review_authorization", None)
+            item.pop("review_label_event_id", None)
+            return item, boundary_probe, errors
+
+        verify_ids = []
+        if item.get("review_authorization") != "label_added" and item["kind"] != "resume":
+            verify_ids = _eligible_verify_ids(
+                item, task, since, feedback["issue"] if feedback is not None else None,
+            )
+        if verify_ids:
+            item["verify_comment_ids"] = verify_ids
+            item["kind"] = "verify"
+            item["priority"] = 1
+            item.pop("review_authorization", None)
+            # Verification is independent of full-review approval. Leave any
+            # re-review command unseen for a later cycle.
+            item.pop("rereview_comment_ids", None)
+        else:
+            command_ids = _eligible_rereview_ids(
+                item, task, since, feedback["issue"] if feedback is not None else None,
+            )
+            if command_ids:
+                item["rereview_comment_ids"] = command_ids
+                item["kind"] = "review"
+                item["priority"] = 1
+                item["review_authorization"] = "approval_required"
+        feedback_ids = external_feedback_ids(
+            repo, pr["number"], since, item["updated_at"], set(seen_feedback), feedback,
+        ) if task and item["kind"] in {"review", "feedback_check"} else []
+        if item["kind"] != "feedback_check" or feedback_ids:
+            item["feedback_comment_ids"] = feedback_ids
+            return item, boundary_probe, errors
+    except (RuntimeError, subprocess.TimeoutExpired, ValueError, json.JSONDecodeError) as exc:
+        if not command_scan_done or item["kind"] in {"feedback_check", "command_reply"}:
+            errors.append(f"{repo}#{pr['number']}: {exc}")
+            return None, boundary_probe, errors
+        # An unverified comment must not authorize or trigger a full review;
+        # SHA changes remain gated by approval.
+        if item["kind"] == "review":
+            item["review_authorization"] = item.get("review_authorization", "approval_required")
+        item["feedback_comment_ids"] = []
+        return item, boundary_probe, errors
+    return None, boundary_probe, errors
+
+
 def pick_work(repos: dict, config: dict, tasks: list[dict],
               excluded_task_keys: set[str] | None = None) -> tuple[dict | None, list[str]]:
     excluded_task_keys = excluded_task_keys or set()
@@ -905,124 +1024,53 @@ def pick_work(repos: dict, config: dict, tasks: list[dict],
     boundary_probes: list[tuple[dict, dict, str, str]] = []
     open_pr_keys: set[str] = set()
     failed_repos: set[str] = set()
+    repo_infos: list[tuple[str, str]] = []
     for repo_key, entry in repos.items():
         try:
             repo = github_repo_url(entry["upstream"])
         except (KeyError, ReviewConfigError):
             continue  # The review-only instance handles GitHub repositories.
-        try:
-            prs = list_prs(repo, config["review_label"])
-        except (RuntimeError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
-            errors.append(f"{repo}: {exc}")
+        repo_infos.append((repo_key, repo))
+
+    # The workflow covers eight repositories and each `gh pr list` call has a
+    # 15-second timeout. Run independent listings concurrently so slow GitHub
+    # responses cannot consume the runner's full 120-second preflight budget
+    # before candidate scanning begins.
+    if repo_infos:
+        with ThreadPoolExecutor(max_workers=min(8, len(repo_infos))) as executor:
+            repo_results = list(executor.map(
+                lambda info: _list_repo_prs(info, config["review_label"]), repo_infos,
+            ))
+    else:
+        repo_results = []
+
+    pr_specs: list[tuple[dict, str, str, dict | None]] = []
+    for repo_key, repo, prs, error in repo_results:
+        if error is not None:
+            errors.append(f"{repo}: {error}")
             failed_repos.add(repo)
             continue
+        assert prs is not None
         for pr in prs:
             key = task_key(repo, pr.get("number"))
             open_pr_keys.add(key)
-            if key in excluded_task_keys:
-                continue
-            task = by_key.get(key)
-            if task and task.get("status") in {"archived", "paused"}:
-                # Keep archived and paused tasks out of all review, feedback,
-                # and lifecycle paths until an operator changes their status.
-                continue
-            item = candidate(pr, repo_key, repo, task)
-            if item is None and task and task.get("status") in {"done", "pr_open"}:
-                # updatedAt has second precision: a new command can share the
-                # last-seen timestamp and otherwise never enter feedback_check.
-                probe = candidate(pr, repo_key, repo, task, pending_rereview=True)
-                meta = _metadata(task)
-                since, through = meta.get("last_seen_updated_at"), pr.get("updatedAt")
-                if (probe and probe["kind"] == "feedback_check" and since
-                        and isinstance(through, str)):
-                    boundary_probes.append((probe, meta, since, through))
-            if item and item["kind"] != "resume":
-                try:
-                    label_event = _latest_review_label_event(repo, pr["number"], config["review_label"])
-                except (RuntimeError, subprocess.TimeoutExpired, ValueError, json.JSONDecodeError) as exc:
-                    errors.append(f"{repo}#{pr['number']}: cannot verify review-label event: {exc}")
-                    # Fail closed when GitHub cannot confirm that the label
-                    # was just added. Changed revisions still require approval.
-                    if item["kind"] == "review":
-                        item["review_authorization"] = "approval_required"
-                else:
-                    _apply_review_label_event(item, label_event, task)
-            if item:
-                meta = _metadata(task or {})
-                seen_feedback = meta.get("seen_feedback_comment_ids") or []
-                if (not isinstance(seen_feedback, list)
-                        or any(not isinstance(ident, str) for ident in seen_feedback)):
-                    errors.append(f"{repo}#{pr['number']}: Invalid seen_feedback_comment_ids")
-                    continue
-                since = meta.get("last_seen_updated_at") or meta.get("last_reviewed_at") or "1970-01-01T00:00:00Z"
-                command_scan_done = not (task and task.get("status") in COMMANDABLE)
-                try:
-                    feedback = (
-                        _fetch_pr_feedback(repo, pr["number"], since)
-                        if task and task.get("status") in COMMANDABLE else None
-                    )
-                    command_requests = []
-                    if task and task.get("status") in COMMANDABLE:
-                        command_requests = _eligible_bot_commands(
-                            item, since, set(seen_feedback), feedback,
-                        )
-                        command_scan_done = True
-                    if command_requests:
-                        item["kind"] = "command_reply"
-                        item["priority"] = 1
-                        item["command_requests"] = command_requests
-                        item["feedback_comment_ids"] = [
-                            request["feedback_id"] for request in command_requests
-                        ]
-                        item["task_status"] = task.get("status")
-                        review_id = meta.get("review_id")
-                        if type(review_id) is int and review_id > 0:
-                            item["status_review_id"] = review_id
-                        item.pop("review_authorization", None)
-                        item.pop("review_label_event_id", None)
-                        found.append(item)
-                        continue
+            if key not in excluded_task_keys:
+                pr_specs.append((pr, repo_key, repo, by_key.get(key)))
 
-                    verify_ids = []
-                    if (item.get("review_authorization") != "label_added"
-                            and item["kind"] != "resume"):
-                        verify_ids = _eligible_verify_ids(
-                            item, task, since, feedback["issue"] if feedback is not None else None,
-                        )
-                    if verify_ids:
-                        item["verify_comment_ids"] = verify_ids
-                        item["kind"] = "verify"
-                        item["priority"] = 1
-                        item.pop("review_authorization", None)
-                        # Verification is independent of full-review approval.
-                        # Leave any re-review command unseen for a later cycle.
-                        item.pop("rereview_comment_ids", None)
-                    else:
-                        command_ids = _eligible_rereview_ids(
-                            item, task, since, feedback["issue"] if feedback is not None else None,
-                        )
-                        if command_ids:
-                            item["rereview_comment_ids"] = command_ids
-                            item["kind"] = "review"
-                            item["priority"] = 1
-                            item["review_authorization"] = "approval_required"
-                    feedback_ids = external_feedback_ids(
-                        repo, pr["number"], since, item["updated_at"], set(seen_feedback), feedback,
-                    ) if task and item["kind"] in {"review", "feedback_check"} else []
-                    if item["kind"] != "feedback_check" or feedback_ids:
-                        item["feedback_comment_ids"] = feedback_ids
-                        found.append(item)
-                except (RuntimeError, subprocess.TimeoutExpired, ValueError, json.JSONDecodeError) as exc:
-                    if (not command_scan_done
-                            or item["kind"] in {"feedback_check", "command_reply"}):
-                        errors.append(f"{repo}#{pr['number']}: {exc}")
-                        continue
-                    # An unverified comment must not authorize or trigger a
-                    # full review; SHA changes remain gated by approval.
-                    if item["kind"] == "review":
-                        item["review_authorization"] = item.get("review_authorization", "approval_required")
-                    item["feedback_comment_ids"] = []
-                    found.append(item)
+    if pr_specs:
+        # Candidate checks also call GitHub for label events and recent
+        # feedback. Bound parallelism to keep a large labeled queue from
+        # serializing those independent API waits while limiting API pressure.
+        with ThreadPoolExecutor(max_workers=min(8, len(pr_specs))) as executor:
+            inspections = list(executor.map(
+                lambda args: _inspect_labeled_pr(*args, config["review_label"]), pr_specs,
+            ))
+        for item, boundary_probe, scan_errors in inspections:
+            errors.extend(scan_errors)
+            if boundary_probe is not None:
+                boundary_probes.append(boundary_probe)
+            if item is not None:
+                found.append(item)
     for task in tasks:
         status = task.get("status")
         meta = _metadata(task)

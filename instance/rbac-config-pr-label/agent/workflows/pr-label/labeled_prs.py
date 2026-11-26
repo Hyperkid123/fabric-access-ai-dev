@@ -61,7 +61,7 @@ def _author_login(pr: dict) -> str:
 
 
 def is_foreign_pr(pr: dict) -> bool:
-    """True if this PR belongs to the Jira bot or Konflux squash workflow."""
+    """Classify known bot ownership; this must not gate labeled PR eligibility."""
     branch = (pr.get("headRefName") or "").lower()
     if branch.startswith(_FOREIGN_BRANCH_PREFIXES):
         return True
@@ -143,19 +143,10 @@ def main() -> None:
 
     candidates = []
     tracked = 0
-    foreign = 0
     for _name, nwo in gh_repos:
         for pr in gh_pr_list(nwo, PR_LABEL):
             number = pr.get("number")
             if not number:
-                continue
-            if is_foreign_pr(pr):
-                foreign += 1
-                print(
-                    f"  Skipping {nwo}#{number}: owned by Jira/Konflux bot "
-                    f"(branch={pr.get('headRefName')}, author={_author_login(pr)})",
-                    file=sys.stderr,
-                )
                 continue
             key = task_key(nwo, number)
             if is_tracked(key, tasks):
@@ -181,8 +172,6 @@ def main() -> None:
         bits = []
         if tracked:
             bits.append(f"{tracked} already tracked")
-        if foreign:
-            bits.append(f"{foreign} owned by other-bot workflows")
         extra = f" ({', '.join(bits)})" if bits else ""
         output_result("skip", f"No open PRs with label {PR_LABEL!r}{extra}")
         return
