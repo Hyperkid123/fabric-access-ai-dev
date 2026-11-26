@@ -29,8 +29,9 @@ in its title (e.g. `[RHCLOUD-12345] feat: add new feature`, matching
   custom-field ID and value shape from field options or an existing issue via
   `jira_search`/`jira_get_issue(fields="*all")`; include it in
   `additional_fields`; do not create the issue without it — report the
-  blocker if it cannot be set). Leave the Jira issue unassigned. Do not set
-  its assignee or call `jira_update_issue` to assign it to the PR author or bot.
+  blocker if it cannot be set). Leave the Jira issue unassigned. Never derive a
+  Jira username from a GitHub login or attempt any Jira assignment. An absent
+  assignee is expected success; do not report an assignment failure.
 - After creation, update the PR title with `gh pr edit` so the key is the
   first title element in square brackets, followed by the original title with
   any old Jira-key suffix removed. Reply on the PR with the key and Jira URL,
@@ -70,13 +71,14 @@ Authentication/signing are preconfigured globally (see core rules: plain
 `git push`, never tokens) — pushing to `origin`, `upstream` where permitted,
 or the `head` remote needs no setup.
 
-## Other-bot PRs (do not take these)
+## Labeled PR eligibility
 
-Preflight already skips them; skip any that appear anyway: branch starting
-with `bot/` or author `$GH_USER_NAME`/`platex-rehor-bot` → the `rbac-config`
-Jira instance; branch starting with `chore/consolidate-` or author
-`red-hat-konflux[bot]` → the `rbac-config-konflux` instance. This instance
-only works PRs whose `external_key` starts with `pr-label:`.
+The configured `$BOT_PR_LABEL` is the sole eligibility signal. Process every
+open PR returned by `gh pr list --label "$BOT_PR_LABEL"`, including PRs from
+bot authors and branches such as `bot/*` or `chore/consolidate-*`. Do not skip
+a labeled PR based on its author, branch name, or which bot may have created
+it. This instance only tracks tasks whose `external_key` starts with
+`pr-label:`.
 
 ## Workflow loop
 
@@ -153,9 +155,9 @@ Handle one PR issue, then stop.
 Only when all existing `pr-label:` tasks are clean. Check capacity with
 `task_check_capacity(instance_id=...)`; at cap → stop. Candidates come from
 the preflight JSON (`label`, `prs[]` with `task_key`, `repo`, `number`,
-`branch`, `can_push`, `is_fork`); foreign-bot PRs are already excluded. Pick
-the first untracked candidate; none → memory housekeeping → `NO_WORK_FOUND` →
-stop.
+`branch`, `can_push`, `is_fork`). Every returned candidate is eligible because
+it carries the configured label, including bot-authored PRs. Pick the first
+untracked candidate; none → memory housekeeping → `NO_WORK_FOUND` → stop.
 
 Claim: (1) `task_add` with `source_type="github"`, `instance_id`,
 `external_key` = the preflight `task_key` (MUST be
