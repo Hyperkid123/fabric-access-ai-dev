@@ -40,6 +40,16 @@ run environment setup until the checkout is present and validated. If cloning
 fails or the checkout is incomplete, stop before making changes and report the
 exact path and error.
 
+## Mermaid diagrams in PR comments
+
+When a PR comment needs a Mermaid diagram, use a fenced `mermaid` block and
+keep each sequence-diagram participant, message, and note on its own line.
+Do not put semicolons in message labels; Mermaid can treat them as statement
+separators and make the following arrow fail to parse. Use a comma or split the
+explanation into another message. For example, write
+`P-->>A: Bootstrap error, start cooldown`. If the syntax cannot be validated,
+describe the flow as plain-text steps instead of publishing a broken diagram.
+
 ## Coordinator control tickets
 
 Never claim or implement a ticket labeled `dev-bot-control`, even if it also
