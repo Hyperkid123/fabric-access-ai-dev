@@ -13,7 +13,9 @@ finding ID in the summary and inline comment. The summary has a one-sentence
 purpose statement, a complete human-readable bullet list of affected areas, a
 revision-specific Change risk section written as bullets, and a compact
 `ID | Status | Finding` table. Severity, dimensions, and inline-thread links
-share the Finding cell so IDs and headings stay easy to scan.
+share the Finding cell. Keep IDs and status values nonbreaking so narrow
+rendered columns do not split them across lines; keep all three headers on one
+line.
 Scenario steps and their expected and actual results, evidence, and fixes stay
 in the inline comments. The summary ends
 with contextual-answer, learning-extraction, re-review, and verification commands. Its hidden

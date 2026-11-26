@@ -576,7 +576,8 @@ inline threads for confirmed findings. The summary has a short description of
 the PR, a complete bullet list of affected areas, a bullet-point Change risk
 section, a compact findings table with inline-thread links, and prompts for
 contextual answers, re-review, or verification. The table uses short, single-
-word headers (`ID`, `Status`, `Finding`) and code-styled IDs to avoid wrapping.
+word headers (`ID`, `Status`, `Finding`) and nonbreaking code-styled IDs and
+status values so narrow rendered columns do not split them across lines.
 The `Status` values are `Accepted`, `Rejected`, `Addressed`, and `Follow-up`;
 cross-repository follow-ups are routed to their configured Jira owner.
 A comment beginning with `/review-bot` in

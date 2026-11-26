@@ -8,6 +8,7 @@ import hashlib
 import json
 import re
 from datetime import datetime, timezone
+from html import escape as html_escape
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
@@ -613,6 +614,16 @@ def table_cell(value: object) -> str:
     return text.replace("|", "&#124;") or "—"
 
 
+def nonbreaking_table_text(value: object) -> str:
+    """Prevent narrow GitHub table cells from splitting IDs and status words."""
+    text = " ".join(str(value).split()) or "—"
+    parts = [
+        "&#124;" if character == "|" else html_escape(character, quote=False)
+        for character in text
+    ]
+    return "&#8288;".join(parts)
+
+
 def finding_disposition(item: dict) -> str:
     status = str(item.get("status", "open"))
     if status == "open":
@@ -646,7 +657,8 @@ def findings_table(findings: list[dict]) -> list[str]:
         else:
             finding += f" — [Thread](review-comment:{ident})"
         lines.append(
-            f"| `{table_cell(ident)}` | {table_cell(disposition)} | {table_cell(finding)} |"
+            f"| <code>{nonbreaking_table_text(ident)}</code> | "
+            f"{nonbreaking_table_text(disposition)} | {table_cell(finding)} |"
         )
     return lines
 

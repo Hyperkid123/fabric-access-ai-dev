@@ -662,8 +662,9 @@ retryable.
    keep one human-readable bullet for every area and never replace remaining
    areas with an “additional areas” count. The table keeps each heading to one
    short word, displays IDs in code style, and puts severity, dimensions, and
-   the inline-thread link in the `Finding` cell. Use `Accepted` for verifier-
-   confirmed open findings, `Rejected` for verifier-refuted candidates,
+   the inline-thread link in the `Finding` cell. Keep IDs and status values
+   nonbreaking so narrow columns do not split them across lines. Use `Accepted`
+   for open findings confirmed by the verifier, `Rejected` for refuted candidates,
    `Addressed` for fixes confirmed by later verification, and `Follow-up` for
    confirmed cross-repository findings routed to Jira. Rejected findings appear
    in the table and ledger but never receive inline comments. Keep finding
