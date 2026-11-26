@@ -10,7 +10,7 @@ verified ledger has no open findings; it does not submit an `APPROVE` review.
 It also
 posts one idempotent inline thread per actionable finding, using the same
 finding ID in the summary and inline comment. The summary has a one-sentence
-purpose statement, a complete human-readable bullet list of affected areas, a
+purpose statement, grouped human-readable affected areas with nested subareas,
 revision-specific Change risk section written as bullets, and a compact
 `ID | Status | Finding` table. Severity, dimensions, and inline-thread links
 share the Finding cell. Keep IDs and status values nonbreaking so narrow
@@ -588,8 +588,12 @@ This PR aligns the documented role response with the fields returned by the hand
 
 ### Affected areas
 
-- **RBAC management APIs and data models** (`rbac/management/`; 3 changed files)
-- **Project documentation** (`docs/`; 2 changed files)
+- **RBAC**
+  - Management APIs and principal/group data models (`rbac/management/`)
+- **Documentation**
+  - Project guides and operational documentation (`docs/`)
+- **Tests**
+  - Management API, migration, and data-model tests (`tests/management/`)
 
 ### Change risk
 

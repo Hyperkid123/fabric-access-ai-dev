@@ -656,12 +656,14 @@ retryable.
 
    For `manifest.format == "standard"`, use the generated publication JSON and
    inline comments. The status summary has a `Review N` heading (without `#N`),
-   the one-sentence `pr_summary`, a complete `Affected areas` bullet list, a
+   the one-sentence `pr_summary`, a complete `Affected areas` list, a
    bullet-point `Change risk` section, and a compact `ID | Status | Finding`
-   table. The affected-area list is generated from every path in `impact.json`;
-   keep one human-readable bullet for every area and never replace remaining
-   areas with an “additional areas” count. The table keeps each heading to one
-   short word, displays IDs in code style, and puts severity, dimensions, and
+   table. Group related areas under parent bullets such as `RBAC` and `Tests`,
+   with a nested bullet for each affected subarea. The list is generated from
+   every path in `impact.json`; describe each subarea in plain language, include
+   root-level filenames with a short purpose, and never report changed-file
+   counts or replace areas with an “additional areas” count. The table keeps
+   each heading to one short word, displays IDs in code style, and puts severity, dimensions, and
    the inline-thread link in the `Finding` cell. Keep IDs and status values
    nonbreaking so narrow columns do not split them across lines. Use `Accepted`
    for open findings confirmed by the verifier, `Rejected` for refuted candidates,
