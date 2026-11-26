@@ -1015,8 +1015,14 @@ def _inspect_labeled_pr(
     return None, boundary_probe, errors
 
 
-def pick_work(repos: dict, config: dict, tasks: list[dict],
-              excluded_task_keys: set[str] | None = None) -> tuple[dict | None, list[str]]:
+def pick_work(
+    repos: dict,
+    config: dict,
+    tasks: list[dict],
+    excluded_task_keys: set[str] | None = None,
+    repo_pr_cache: dict[str, tuple[list[dict] | None, str | None]] | None = None,
+    pr_scan_cache: dict[str, tuple[dict | None, tuple[dict, dict, str, str] | None, list[str]]] | None = None,
+) -> tuple[dict | None, list[str]]:
     excluded_task_keys = excluded_task_keys or set()
     by_key = {task["external_key"]: task for task in tasks}
     found: list[dict] = []
@@ -1025,6 +1031,8 @@ def pick_work(repos: dict, config: dict, tasks: list[dict],
     open_pr_keys: set[str] = set()
     failed_repos: set[str] = set()
     repo_infos: list[tuple[str, str]] = []
+    repo_pr_cache = repo_pr_cache if repo_pr_cache is not None else {}
+    pr_scan_cache = pr_scan_cache if pr_scan_cache is not None else {}
     for repo_key, entry in repos.items():
         try:
             repo = github_repo_url(entry["upstream"])
@@ -1036,13 +1044,21 @@ def pick_work(repos: dict, config: dict, tasks: list[dict],
     # 15-second timeout. Run independent listings concurrently so slow GitHub
     # responses cannot consume the runner's full 120-second preflight budget
     # before candidate scanning begins.
-    if repo_infos:
-        with ThreadPoolExecutor(max_workers=min(8, len(repo_infos))) as executor:
-            repo_results = list(executor.map(
-                lambda info: _list_repo_prs(info, config["review_label"]), repo_infos,
+    missing_repo_infos = [info for info in repo_infos if info[1] not in repo_pr_cache]
+    if missing_repo_infos:
+        with ThreadPoolExecutor(max_workers=min(8, len(missing_repo_infos))) as executor:
+            fetched_results = list(executor.map(
+                lambda info: _list_repo_prs(info, config["review_label"]), missing_repo_infos,
             ))
-    else:
-        repo_results = []
+        for _repo_key, repo, prs, error in fetched_results:
+            repo_pr_cache[repo] = (prs, error)
+
+    # Approval and ledger-recovery waits can make main() re-scan this queue.
+    # Reuse this cycle's repository snapshot instead of repeating the API calls.
+    repo_results = [
+        (repo_key, repo, *repo_pr_cache[repo])
+        for repo_key, repo in repo_infos
+    ]
 
     pr_specs: list[tuple[dict, str, str, dict | None]] = []
     for repo_key, repo, prs, error in repo_results:
@@ -1054,7 +1070,7 @@ def pick_work(repos: dict, config: dict, tasks: list[dict],
         for pr in prs:
             key = task_key(repo, pr.get("number"))
             open_pr_keys.add(key)
-            if key not in excluded_task_keys:
+            if key not in excluded_task_keys and key not in pr_scan_cache:
                 pr_specs.append((pr, repo_key, repo, by_key.get(key)))
 
     if pr_specs:
@@ -1065,7 +1081,21 @@ def pick_work(repos: dict, config: dict, tasks: list[dict],
             inspections = list(executor.map(
                 lambda args: _inspect_labeled_pr(*args, config["review_label"]), pr_specs,
             ))
-        for item, boundary_probe, scan_errors in inspections:
+        for args, inspection in zip(pr_specs, inspections):
+            pr, _repo_key, repo, _task = args
+            pr_scan_cache[task_key(repo, pr.get("number"))] = inspection
+
+    for repo_key, repo, prs, error in repo_results:
+        if error is not None or prs is None:
+            continue
+        for pr in prs:
+            key = task_key(repo, pr.get("number"))
+            if key in excluded_task_keys:
+                continue
+            inspection = pr_scan_cache.get(key)
+            if inspection is None:
+                continue
+            item, boundary_probe, scan_errors = inspection
             errors.extend(scan_errors)
             if boundary_probe is not None:
                 boundary_probes.append(boundary_probe)
@@ -1204,11 +1234,17 @@ def main() -> None:
             return
         tasks = load_tasks()
         excluded_task_keys: set[str] = set()
+        repo_pr_cache: dict[str, tuple[list[dict] | None, str | None]] = {}
+        pr_scan_cache: dict[
+            str, tuple[dict | None, tuple[dict, dict, str, str] | None, list[str]]
+        ] = {}
         recovery_waits: list[str] = []
         approval_waits: list[str] = []
         verification_waits: list[str] = []
         while True:
-            chosen, errors = pick_work(repos, config, tasks, excluded_task_keys)
+            chosen, errors = pick_work(
+                repos, config, tasks, excluded_task_keys, repo_pr_cache, pr_scan_cache,
+            )
             if chosen is None:
                 status = "error" if errors else "skip"
                 detail = "; ".join(errors) if errors else "No labeled PR needs review or feedback handling"
