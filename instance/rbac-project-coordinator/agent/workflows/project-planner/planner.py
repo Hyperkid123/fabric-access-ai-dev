@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import re
 import sys
 from pathlib import Path
 
@@ -15,7 +17,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "project-coordinato
 from actions import COMMAND_HELP_FOOTER  # noqa: E402
 from jira_mcp import jira_call, jira_cleanup  # noqa: E402
 from project_coordinator import (  # noqa: E402
-    PLANNER_HEADING,
     PLANNER_RECEIPT,
     comments,
     key_of,
@@ -24,6 +25,12 @@ from project_coordinator import (  # noqa: E402
     planner_focus,
     planner_receipt,
     planner_request_path,
+    implementation_children,
+    linked_issues,
+    planner_ticket_snapshot,
+    search_all,
+    status_name,
+    ticket_plan_digest,
     value,
 )
 
@@ -81,6 +88,10 @@ def issue_context(issue: dict) -> dict:
             label for label in labels(issue)
             if isinstance(label, str) and label.startswith("repo:")
         }),
+        "labels": sorted(label for label in labels(issue) if isinstance(label, str)),
+        "status": status_name(issue),
+        "blockers": sorted(linked_issues(issue)[0]),
+        "related": sorted(linked_issues(issue)[1]),
     }
 
 
@@ -102,15 +113,30 @@ def current_request(control_key: str, comment_id: str) -> dict:
         raise RuntimeError(f"{control_key}: planner command comment was removed or changed")
     if any(planner_receipt(item) == comment_id for item in items):
         raise RuntimeError(f"{control_key}: that planner command already has a published plan")
-    parent_context = issue_context(get_issue(parent, fields="summary,description,labels"))
+    parent_issue = get_issue(parent, fields="summary,description,labels,priority,issuetype,issuelinks")
+    parent_context = issue_context(parent_issue)
+    control_context = issue_context(control)
+    team_field_id = os.getenv("BOT_TEAM_FIELD_ID", "")
+    implementation_tickets = []
+    ticket_snapshot_hash = ""
+    if re.fullmatch(r"customfield_\d+", team_field_id):
+        siblings = search_all(f'parent = "{parent}" ORDER BY key ASC')
+        children = implementation_children(siblings, control, team_field_id)
+        implementation_tickets = [issue_context(item) for item in children]
+        ticket_snapshot_hash = ticket_plan_digest(planner_ticket_snapshot(children, team_field_id))
+    repo_catalog = json.loads((REVIEW_AGENT / "project-repos.json").read_text(encoding="utf-8"))
     data = {
         "control_key": control_key,
         "comment_id": comment_id,
+        "control": control_context,
         "parent": parent_context,
+        "implementation_tickets": implementation_tickets,
+        "ticket_snapshot_hash": ticket_snapshot_hash,
+        "available_repositories": sorted(repo_catalog),
         "focus": focus,
         "docs_base": settings["docs_base"],
         "docs_glob": settings["docs_glob"],
-        "warnings": [] if parent_context["description"].strip() else [f"Parent ticket {parent} has an empty description."],
+        "warnings": [],
     }
     request_id = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
     return {**data, "request_id": request_id}
@@ -118,19 +144,61 @@ def current_request(control_key: str, comment_id: str) -> dict:
 
 def publish(manifest_path: Path) -> dict:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    plan = manifest_path.with_name("plan.md").read_text(encoding="utf-8").strip()
-    if not plan or len(plan) > 24_000:
-        raise ValueError("plan.md must contain between 1 and 24,000 characters")
+    plan = ""
+    if manifest.get("context_available"):
+        plan = manifest_path.with_name("plan.md").read_text(encoding="utf-8").strip()
+        if not plan or len(plan) > 24_000:
+            raise ValueError("plan.md must contain between 1 and 24,000 characters")
+        assignments = re.search(r"```planner-coordination\s*(.*?)\s*```", plan, re.I | re.S)
+        expected_tickets = {item["key"] for item in manifest.get("implementation_tickets", [])}
+        if not assignments:
+            raise ValueError("plan.md must include a planner-coordination JSON block")
+        try:
+            structured = json.loads(assignments[1])
+        except json.JSONDecodeError as error:
+            raise ValueError("planner-coordination block must contain valid JSON") from error
+        ticket_assignments = structured.get("ticket_assignments") if isinstance(structured, dict) else None
+        if not isinstance(ticket_assignments, dict) or set(ticket_assignments) != expected_tickets:
+            raise ValueError("planner-coordination must assign every current same-Team implementation ticket exactly once")
+        if structured.get("input_snapshot_hash") != manifest.get("ticket_snapshot_hash"):
+            raise ValueError("planner-coordination input_snapshot_hash must match the supplied ticket snapshot")
+        available = set(manifest.get("available_repositories", []))
+        for key, assignment in ticket_assignments.items():
+            if (not isinstance(assignment, dict)
+                    or not re.fullmatch(r"phase:\d{2}", str(assignment.get("phase") or ""))
+                    or assignment.get("repository") not in available):
+                raise ValueError(f"planner-coordination has an invalid phase or repository for {key}")
     control_key, comment_id = manifest["control_key"], manifest["comment_id"]
     request = current_request(control_key, comment_id)
     if manifest["request_id"] != request["request_id"]:
         raise RuntimeError(f"{control_key}: the planner inputs changed after the plan was drafted")
     warnings = manifest["warnings"]
     parent = request["parent"]["key"]
-    body = f"### {PLANNER_HEADING} for {parent}\n\n"
+    if not manifest.get("context_available"):
+        control = request.get("control") or {}
+        has_declarations = bool(
+            re.search(r"(?im)^\s*project documentation\s*:", control.get("description") or "")
+        )
+        if not control.get("repo_labels") and not has_declarations:
+            missing = "No repo: labels are set on the parent and no Project documentation is declared on the control ticket."
+        else:
+            missing = "No readable project documentation or repository context was available; see the context gaps below."
+        body = f"PLANNER: Planner update - Context required for {parent}\n\n{missing}\n"
+        body += "The planner did not create a technical plan. Add project documentation to the control ticket or resolve the listed context gaps, then post `PLANNER: /coord plan` again."
+    else:
+        body = f"PLANNER: Planner update - Technical plan for {parent}\n\n{plan}\n"
     if warnings:
         body += "**Context gaps**\n\n" + "".join(f"- {warning}\n" for warning in warnings) + "\n"
-    body += f"{plan}\n\n{COMMAND_HELP_FOOTER}\n\n{PLANNER_RECEIPT} {comment_id}"
+    if manifest.get("context_available"):
+        body += (
+            "### Possible next steps\n"
+            "- Ask the coordinator to publish ticket proposals for plan work without Jira tickets.\n"
+            "- After the proposal list is published, use `COORDINATOR: /coord create plan` for all proposals without Jira keys, "
+            "`COORDINATOR: /coord create phase:01` for one phase, or "
+            "`COORDINATOR: /coord create P-1,P-3` for selected items.\n"
+            "- After ticket creation, request `PLANNER: /coord plan` again to assign the new Jira keys.\n\n"
+        )
+    body += f"\n{COMMAND_HELP_FOOTER}\n\n{PLANNER_RECEIPT} {comment_id}"
     comment = call("jira_add_comment", {"issue_key": control_key, "comment": body})
     return {"status": "published", "control_key": control_key, "comment_id": comment.get("id"), "warnings": warnings}
 

@@ -53,12 +53,24 @@ def blocked_by(key: str) -> dict:
     return {"type": {"name": "Blocks", "inward": "is blocked by", "outward": "blocks"}, "inwardIssue": {"key": key}}
 
 
+def add_planner_comment(control: dict, children: list[dict], assignments: dict, comment_id="499") -> str:
+    snapshot_hash = coordinator.ticket_plan_digest(coordinator.planner_ticket_snapshot(children, TEAM_FIELD))
+    body = (
+        f"{coordinator.PLANNER_HEADING} for RHCLOUD-100\n\n"
+        "```planner-coordination\n"
+        + json.dumps({"input_snapshot_hash": snapshot_hash, "ticket_assignments": assignments})
+        + f"\n```\n\n{coordinator.PLANNER_RECEIPT} 498"
+    )
+    control["fields"]["comment"]["comments"].append({"id": comment_id, "body": body})
+    return snapshot_hash
+
+
 def test_control_ticket_planner_command_uses_coordinator_preflight(monkeypatch, tmp_path, capsys):
     control = issue("RHCLOUD-101", labels=[CONFIG[0]])
     control["fields"]["assignee"] = {"displayName": "Assigned Coordinator"}
     parent = issue("RHCLOUD-100", parent=None, description="Parent project brief")
     before = coordinator.fingerprint(parent, control, [], TEAM_FIELD)
-    command = {"id": "504", "body": "/coord planner Describe the approved rollout"}
+    command = {"id": "504", "body": "PLANNER: /coord plan Describe the approved rollout"}
     control["comments"] = [command]
     assert coordinator.fingerprint(parent, control, [], TEAM_FIELD) == before
 
@@ -78,16 +90,17 @@ def test_control_ticket_planner_command_uses_coordinator_preflight(monkeypatch, 
     }
     settings = json.loads((tmp_path / "RHCLOUD-101-504.json").read_text())
     assert settings["docs_base"] == "https://gitlab.example.com/team/docs/"
-    with pytest.raises(ValueError, match="Planner comments cannot authorize coordinator actions"):
+    with pytest.raises(ValueError, match="first-line COORDINATOR"):
         actions.request_comment(control, "504", actions.SETUP_APPROVAL_RE.pattern)
 
     control["comments"].append({"id": "505", "body": (
-        f"### {coordinator.PLANNER_HEADING} for RHCLOUD-100\n\n"
+        f"{coordinator.PLANNER_HEADING} for RHCLOUD-100\n\n"
         f"{coordinator.PLANNER_RECEIPT} 504"
     )})
     assert coordinator.pending_planner_request(control, CONFIG[0]) is None
-    assert coordinator.fingerprint(parent, control, [], TEAM_FIELD) == before
+    assert coordinator.fingerprint(parent, control, [], TEAM_FIELD) != before
     assert coordinator.planner_focus({"body": "/coord plan"}) is None
+    assert coordinator.planner_focus({"body": "PLANNER: /coord plan"}) == ""
 
 
 def test_parallel_first_tickets_and_release_pending_unblock_next_phase():
@@ -169,7 +182,10 @@ def jira_store(monkeypatch):
     first = issue("RHCLOUD-102", labels=["phase:01"], links=[relates("RHCLOUD-101")])
     parent = issue("RHCLOUD-100", parent=None, summary="Parent")
     parent["fields"]["issuetype"] = {"name": "Epic"}
-    control["fields"]["comment"] = {"comments": [{"id": "500", "body": "/coord create P-1"}]}
+    control["fields"]["comment"] = {"comments": [{"id": "500", "body": "COORDINATOR: /coord create P-1"}]}
+    add_planner_comment(control, [first], {
+        "RHCLOUD-102": {"phase": "phase:01", "repository": "rbac-config"},
+    })
     store = {item["key"]: item for item in (control, first, parent)}
     writes = []
 
@@ -243,19 +259,44 @@ def test_approved_setup_labels_and_starts_implementation_without_issue_links(jir
     child["fields"]["issuelinks"] = []
     later = issue("RHCLOUD-103", labels=[], links=[blocked_by("RHCLOUD-102")])
     store["RHCLOUD-103"] = later
+    control["fields"]["comment"]["comments"] = []
+    planner_hash = add_planner_comment(control, [child, later], {
+        "RHCLOUD-102": {"phase": "phase:01", "repository": "insights-rbac"},
+        "RHCLOUD-103": {"phase": "phase:02", "repository": "insights-rbac"},
+    }, comment_id="699")
     proposal = {
-        "repository": "insights-rbac",
         "phase_assignments": {"phase:01": ["RHCLOUD-102"], "phase:02": ["RHCLOUD-103"]},
+        "ticket_repositories": {"RHCLOUD-102": "insights-rbac", "RHCLOUD-103": "insights-rbac"},
+        "planner_comment_id": "699",
+        "planner_input_snapshot_hash": planner_hash,
+        "ticket_snapshot_hash": coordinator.ticket_plan_digest(
+            coordinator.ticket_plan_snapshot([child, later], TEAM_FIELD, CONFIG[2])
+        ),
     }
     control["fields"]["comment"]["comments"] = [
         {
             "id": "700",
-            "body": "### Coordinator update\n\nReview this setup.\n\n```coordinator-setup\n"
+            "body": "COORDINATOR: Coordinator update - Initial plan #1\n\nReview this setup.\n\n```coordinator-setup\n"
             + json.dumps(proposal)
             + "\n```",
         },
-        {"id": "701", "body": "I preapproved this proposal after review."},
+        {"id": "701", "body": "COORDINATOR: I approve this proposal after review."},
     ]
+    control["fields"]["comment"]["comments"].insert(0, {
+        "id": "699",
+        "body": (
+            f"{coordinator.PLANNER_HEADING} for RHCLOUD-100\n\n"
+            "```planner-coordination\n"
+            + json.dumps({
+                "input_snapshot_hash": planner_hash,
+                "ticket_assignments": {
+                    "RHCLOUD-102": {"phase": "phase:01", "repository": "insights-rbac"},
+                    "RHCLOUD-103": {"phase": "phase:02", "repository": "insights-rbac"},
+                },
+            })
+            + "\n```\n\nPlanner request comment: 698"
+        ),
+    })
     monkeypatch.setattr(actions, "review_context", lambda: {
         "review_label": "dev-bot-review",
         "repositories": {"insights-rbac": {"dev-bot-labels": ["repo:insights-rbac", CONFIG[2]]}},
@@ -266,7 +307,7 @@ def test_approved_setup_labels_and_starts_implementation_without_issue_links(jir
         {"control_key": "RHCLOUD-101", "request_comment_id": "701"},
         CONFIG,
     )
-    assert result["repository"] == "insights-rbac"
+    assert result["repositories"] == ["insights-rbac"]
     assert result["phase_labels_updated"] == ["RHCLOUD-102", "RHCLOUD-103"]
     assert result["handed_off"] == ["RHCLOUD-102"]
     assert result["handoff_failures"] == []
@@ -287,9 +328,9 @@ def test_setup_approval_requires_latest_user_feedback_to_be_in_proposal(jira_sto
         "phase_assignments": {"phase:01": ["RHCLOUD-102"]},
     }
     control["fields"]["comment"]["comments"] = [
-        {"id": "710", "body": "### Coordinator update\n```coordinator-setup\n" + json.dumps(proposal) + "\n```"},
-        {"id": "711", "body": "Please use insights-rbac instead."},
-        {"id": "712", "body": "Approved"},
+        {"id": "710", "body": "COORDINATOR: Coordinator update - Initial plan #1\n```coordinator-setup\n" + json.dumps(proposal) + "\n```"},
+        {"id": "711", "body": "COORDINATOR: Please use insights-rbac instead."},
+        {"id": "712", "body": "COORDINATOR: Approved"},
     ]
     with pytest.raises(ValueError, match="stale"):
         actions.approve_setup({"control_key": "RHCLOUD-101", "request_comment_id": "712"}, CONFIG)
@@ -362,8 +403,8 @@ def test_normal_ticket_creation_requires_explicit_named_proposal(jira_store):
     store, writes = jira_store
     control = store["RHCLOUD-101"]
     control["fields"]["comment"]["comments"] = [
-        {"id": "501", "body": "### Coordinator update\n\nProposal P-1: add a routing test"},
-        {"id": "502", "body": "Please do not create P-1 yet"},
+        {"id": "501", "body": "COORDINATOR: Coordinator update - Status update #1\n\nProposal P-1: add a routing test"},
+        {"id": "502", "body": "COORDINATOR: Please do not create P-1 yet"},
     ]
     request = {
         "control_key": "RHCLOUD-101", "request_comment_id": "502", "proposal_id": "P-1",
@@ -373,7 +414,7 @@ def test_normal_ticket_creation_requires_explicit_named_proposal(jira_store):
         actions.create_ticket(request, CONFIG)
     assert not any(name == "jira_create_issue" for name, _ in writes)
 
-    control["fields"]["comment"]["comments"][-1]["body"] = "/coord create P-1"
+    control["fields"]["comment"]["comments"][-1]["body"] = "COORDINATOR: /coord create P-1"
     created = actions.create_ticket(request, CONFIG)
     assert created["ticket_key"] == "RHCLOUD-105"
     assert store["RHCLOUD-105"]["fields"]["labels"] == ["phase:01"]
@@ -421,7 +462,7 @@ def test_state_label_does_not_wake_preflight():
 
 def test_truncated_control_comments_fail_closed():
     control = issue("RHCLOUD-101", labels=["dev-bot-coordinator"])
-    control["fields"]["comment"] = {"total": 101, "comments": [{"id": "1", "body": "/coord status"}]}
+    control["fields"]["comment"] = {"total": 101, "comments": [{"id": "1", "body": "COORDINATOR: /coord status"}]}
     with pytest.raises(RuntimeError, match="only 1 of 101 comments"):
         coordinator.comments(control)
 
