@@ -7,12 +7,13 @@ import re
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from fnmatch import fnmatchcase
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
-REVIEW_AGENT = Path(__file__).resolve().parents[5] / "rbac-config-review" / "agent"
+REVIEW_AGENT = Path(__file__).resolve().parents[4] / "rbac-config-review" / "agent"
 sys.path.insert(0, str(REVIEW_AGENT / "workflows" / "review-only"))
 from build_context import ContextError, fetch_doc, update_related_repo  # noqa: E402
 from review_config import github_repo_url, load_config  # noqa: E402
@@ -23,6 +24,7 @@ MAX_TOTAL_DOC_BYTES = 512 * 1024
 SAFE_ERRORS = (ContextError, OSError, ValueError, subprocess.TimeoutExpired)
 DOC_DECLARATION = re.compile(r"^[ \t]*project documentation[ \t]*:[ \t]*(.*)$", re.I | re.M)
 FILTER_DECLARATION = re.compile(r"^[ \t]*project documentation filter[ \t]*:[ \t]*(.*)$", re.I | re.M)
+JIRA_KEY = re.compile(r"[A-Z][A-Z0-9_]*-[1-9][0-9]*", re.IGNORECASE | re.ASCII)
 
 
 def relative_parts(path: str) -> list[str]:
@@ -71,19 +73,85 @@ def git(directory: Path, *args: str) -> bytes:
     return result.stdout
 
 
-def read_project_docs(request: dict, directory: Path) -> tuple[list[dict], list[str]]:
-    source = request["epic"] or request["issue"]
-    matches = DOC_DECLARATION.findall(source["description"])
-    if not matches:
-        return [], []
-    location = matches[0].strip().strip("'\"`")
+def jira_reference(location: str) -> str | None:
+    """Extract an issue key; the connector, never the pasted URL, reads Jira."""
+    if JIRA_KEY.fullmatch(location):
+        return location.upper()
+    link = re.fullmatch(r"\[[^\]]+\]\((https://[^\s)]+)\)", location)
+    url = urlsplit(link[1] if link else location.strip("<>"))
+    if url.scheme != "https" or not url.hostname or url.username or url.password:
+        return None
+    parts = url.path.strip("/").split("/")
+    if len(parts) >= 2 and parts[-2] in {"browse", "issues"} and JIRA_KEY.fullmatch(parts[-1]):
+        return parts[-1].upper()
+    return None
+
+
+def read_project_docs(
+    request: dict, directory: Path, load_jira_document: Callable[[str], dict],
+) -> tuple[list[dict], list[str]]:
+    source = request["parent"]
+    git_path = None
+    jira_keys: dict[str, None] = {}
+    warnings = []
+    for match in DOC_DECLARATION.findall(source["description"]):
+        location = match.strip().strip("'\"`")
+        try:
+            key = jira_reference(location)
+            if key:
+                jira_keys.setdefault(key, None)
+                continue
+            relative_parts(location)
+        except ValueError:
+            warnings.append(
+                f"Project documentation in {source['key']} must be a relative Git path, "
+                "Jira issue key, or Jira issue URL."
+            )
+            continue
+        if git_path is None:
+            git_path = location
+        else:
+            warnings.append(f"Skipped additional Git documentation path `{location}` in {source['key']}.")
+
+    documents = []
+    if git_path is not None:
+        git_docs, git_warnings = read_git_docs(request, source, git_path, directory)
+        documents.extend(git_docs)
+        warnings.extend(git_warnings)
+    jira_bytes = 0
+    for key in list(jira_keys)[:MAX_DOC_FILES]:
+        try:
+            issue = source if key == source["key"] else load_jira_document(key)
+            description = issue["description"].strip()
+            if not description:
+                warnings.append(f"Jira project documentation {key} has an empty description.")
+                continue
+            content = f"# {key} — {issue['summary']}\n\n{description}\n"
+            size = len(content.encode("utf-8"))
+            if size > MAX_DOC_BYTES or jira_bytes + size > MAX_TOTAL_DOC_BYTES:
+                warnings.append(f"Jira project documentation {key} exceeds the text size limit.")
+                continue
+            local = directory / f"jira-doc-{key}.txt"
+            local.write_text(content, encoding="utf-8")
+            document = {"jira_key": key, "path": str(local)}
+            url = issue.get("url")
+            if isinstance(url, str) and jira_reference(url) == key:
+                document["url"] = url
+            documents.append(document)
+            jira_bytes += size
+        except (OSError, RuntimeError, ValueError) as exc:
+            warnings.append(f"Could not load Jira project documentation {key}: {exc}.")
+    if len(jira_keys) > MAX_DOC_FILES:
+        warnings.append(f"Read only the first {MAX_DOC_FILES} Jira project documentation references.")
+    return documents, warnings
+
+
+def read_git_docs(request: dict, source: dict, location: str, directory: Path) -> tuple[list[dict], list[str]]:
     filters = FILTER_DECLARATION.findall(source["description"])
     pattern = filters[0].strip().strip("'\"`") if filters else request["docs_glob"]
     warnings = []
-    if len(matches) > 1:
-        warnings.append(f"{source['key']} has multiple project documentation paths. Using the first.")
     if not request["docs_base"]:
-        return [], [*warnings, "Project documentation was requested but BOT_PLANNER_DOCS_BASE_URL is unset."]
+        return [], [f"Git project documentation `{location}` needs BOT_PLANNER_DOCS_BASE_URL."]
 
     try:
         repo, ref, folder, web_prefix = docs_location(request["docs_base"])
@@ -209,16 +277,19 @@ def review_sources(labels: list[str], directory: Path) -> tuple[list[dict], list
     return results[0], results[1], warnings
 
 
-def build_context(request: dict, root: Path = Path("data/planner-context")) -> dict:
+def build_context(
+    request: dict, root: Path = Path("data/planner-context"), *, load_jira_document: Callable[[str], dict],
+) -> dict:
     root.mkdir(parents=True, exist_ok=True)
-    directory = Path(tempfile.mkdtemp(prefix=request["issue"]["key"] + "-", dir=root)).resolve()
-    project_docs, project_warnings = read_project_docs(request, directory)
-    source = request["epic"] or request["issue"]
-    repos, review_docs, repo_warnings = review_sources(source["repo_labels"], directory)
+    directory = Path(tempfile.mkdtemp(prefix=request["control_key"] + "-", dir=root)).resolve()
+    project_docs, project_warnings = read_project_docs(request, directory, load_jira_document)
+    repos, review_docs, repo_warnings = review_sources(request["parent"]["repo_labels"], directory)
     warnings = [*request["warnings"], *project_warnings, *repo_warnings]
     manifest = {
-        "issue": request["issue"],
-        "epic": request["epic"],
+        "control_key": request["control_key"],
+        "comment_id": request["comment_id"],
+        "parent": request["parent"],
+        "focus": request["focus"],
         "request_id": request["request_id"],
         "project_documents": project_docs,
         "repo_checkouts": repos,

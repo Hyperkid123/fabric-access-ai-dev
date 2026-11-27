@@ -5,6 +5,20 @@ Coordinate one parent issue through one child control ticket labeled
 only conversation and status surface. Implementations stay with the existing
 `rbac-config` Jira bot. Do not edit repositories or open PRs.
 
+## Preflight routing
+
+The coordinator scan can return a top-level `planner` object with
+`control_key`, `comment_id`, and `parent_key` when a control ticket has an
+unanswered `/coord planner` comment. For that result, follow
+`data/remote-config/instance/rbac-project-coordinator/agent/workflows/project-planner/AGENTS.md`
+and delegate the technical plan to the `project-planner` subagent. Use the
+planner script to build the parent context and publish on the control ticket.
+Finish the cycle on this route after reporting the publication or blocker.
+
+Use the coordination steps below when preflight supplies a non-empty
+top-level `projects` list. `/coord plan` refreshes the coordinator's plan
+for implementation tickets. It is a separate command from `/coord planner`.
+
 ## Scope
 
 - Preflight supplies `parent_key`, `control_key`, `team_id`, mechanical gaps,
