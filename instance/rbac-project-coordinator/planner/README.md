@@ -7,31 +7,41 @@ to the planner persona and skill.
 ## Jira setup
 
 1. Describe the project goal on the control ticket's direct parent, which can
-   be an Epic or another supported parent issue. Label the parent with one or more
-   repository keys, for example `repo:insights-rbac` and `repo:rbac-config`.
+   be an Epic or another supported parent issue. Label the parent with one or
+   more repository keys, for example `repo:insights-rbac` and `repo:rbac-config`.
    Keys come from the [review repository list](../../rbac-config-review/agent/project-repos.json).
-2. Post `/coord planner` on the existing coordinator control ticket.
-   Add optional focus after the command, for example
-   `/coord planner Focus on rollout and rollback`.
+2. Post `PLANNER: /coord plan` on the existing coordinator control ticket.
+   Add optional focus after the command on the same first line, for example
+   `PLANNER: /coord plan Focus on rollout and rollback`.
 3. Wait for the scheduled scan. The planner reads the parent description
    and referenced context, then posts a technical plan on the control ticket.
    The plan includes phase goals, small or medium work items, dependencies,
-   acceptance criteria, and how to verify each item.
+   acceptance criteria, how to verify each item, and machine-readable phase
+   and repository assignments for current same-Team implementation tickets.
 
 The planner answers each command comment once. Update the parent brief or
-source documentation as needed, then post a new `/coord planner` comment
-to request a revised technical plan. Use `/coord plan` to refresh the
-coordinator's plan for existing implementation tickets.
+source documentation as needed, then post a new `PLANNER: /coord plan` comment
+to request a revised technical plan. The coordinator reads the planner's
+assignments and uses them to propose and apply Jira labels; it does not create
+or refresh the technical plan. Coordinator requests start with
+`COORDINATOR:` on the first line.
 
 ## Project documentation
 
-Add `Project documentation:` to the parent ticket's description. Each
-line can name a Git path, a Jira issue key, or a Jira issue URL. A Jira Epic
-works the same way as any Jira issue. For example:
+Add one or more `Project documentation:` lines to the parent ticket's
+description. When the parent has no `repo:` labels, put these declarations on
+the coordinator control ticket; the planner then uses the project documents
+without loading repository review context. Each line can name a relative Git
+path, a GitHub/GitLab repository, directory, or file URL, a Jira issue key, or
+a Jira issue URL. A Jira Epic works the same way as any Jira issue. For
+example:
 
 ```text
 Project documentation: 'project_2'
 Project documentation filter: 'design/*.md'
+Project documentation: 'https://github.com/example/team-docs/tree/main/architecture'
+Project documentation: 'https://github.com/example/team-docs/blob/main/architecture/overview.md'
+Project documentation: 'https://gitlab.cee.redhat.com/group/team-docs/-/blob/main/design/overview.md'
 Project documentation: 'RHCLOUD-12345'
 Project documentation: 'https://jira.example.com/browse/RHCLOUD-67890'
 ```
@@ -42,10 +52,10 @@ work without a Git base URL. Put the key or link on the same line as the
 declaration. The planner reports missing or empty Jira sources under
 **Context gaps**.
 
-`project_2` is a path relative to `BOT_PLANNER_DOCS_BASE_URL`. Use a directory
-or a direct file path such as `project_2/architecture.md`. The planner accepts
-one Git path and multiple Jira references. Put an optional filter in the
-parent description. The planner reads directories recursively.
+`project_2` is a path relative to `BOT_PLANNER_DOCS_BASE_URL`. Full Git URLs
+can point to repositories, directories, or individual files, and multiple Git
+and Jira references are supported. Put an optional filter in the same ticket
+description as the declarations. The planner reads directories recursively.
 A filter matches paths relative to the requested
 directory. For example, `*.md` includes Markdown files at any depth and
 `design/*.md` selects Markdown files beneath `design/`. A direct file
@@ -67,7 +77,7 @@ matches, and skipped files are reported in the manifest output and under
 **Context gaps** in the Jira comment. The planner can produce a provisional
 plan from the other available sources.
 
-The repository labels select read-only snapshots and supporting documentation
+The parent repository labels select read-only snapshots and supporting documentation
 from [review-context.yaml](../../rbac-config-review/agent/review-context.yaml).
 The planner uses the selected repositories' default branches, the related
 repositories, and the Markdown files configured for those selected repositories.
@@ -81,8 +91,12 @@ continues to use the coordinator profile at `instance/rbac-project-coordinator`.
 
 | Parameter | Value |
 |---|---|
-| `BOT_PLANNER_DOCS_BASE_URL` | Trusted HTTPS repository or directory URL |
+| `BOT_PLANNER_DOCS_BASE_URL` | HTTPS repository or directory used to resolve relative Git paths |
 | `BOT_PLANNER_DOCS_GLOB` | Default directory filter, `*.md` |
+
+If no repo labels and no project documentation can be loaded, the planner
+posts a context-gap comment and does not draft a technical plan. Add project
+documentation to the control ticket and retry.
 
 The Jira connector needs permission to read the parent and comment on the
 control ticket. The existing coordinator preflight checks control ticket

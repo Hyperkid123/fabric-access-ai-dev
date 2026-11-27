@@ -38,6 +38,7 @@ from project_coordinator import (  # noqa: E402
     labels,
     load_project_repos,
     parent_key,
+    current_planner_plan,
     search_all,
     is_complete,
     team_id,
@@ -53,12 +54,13 @@ SETUP_PROPOSAL_RE = re.compile(r"```(?:[A-Za-z0-9_-]+)?\s*(.*?)\s*```", re.DOTAL
 SETUP_APPROVAL_RE = re.compile(r"approv(?:e|ed)", re.IGNORECASE)
 COMMAND_HELP_FOOTER = """---
 **Actions:**
-- A new user comment containing `approve` or `approved` — approve the latest published plan, then apply repository and phase labels and hand off eligible tickets. Added/removed tickets or changed plan inputs require a new Plan revision and approval; normal status, assignee, timestamp, and bot-label changes do not.
-- `/coord plan` — reread current Jira data and publish a fresh plan without handing off tickets.
-- `/coord planner` — draft a technical plan from the parent ticket. Add optional focus after the command.
-- `/coord status` — request a fresh project status.
-- `/coord create P-<number>` — create a ticket proposed in an earlier coordinator comment.
-- `/coord complete project` — confirm project completion after all planned tickets are complete."""
+- `COORDINATOR: approve` — approve the latest coordinator label proposal, then apply repository and phase labels and hand off eligible tickets. Added/removed tickets or changed plan inputs require a refreshed planner plan and new approval.
+- `PLANNER: /coord plan` — draft or refresh the technical plan from project documentation and selected repository context. Add optional focus after the command.
+- `COORDINATOR: /coord status` — request a fresh project status.
+- `COORDINATOR: /coord create P-<number>` — create a ticket proposed in an earlier coordinator comment.
+- `COORDINATOR: /coord complete project` — confirm project completion after all planned tickets are complete.
+
+Start every control-ticket request with `PLANNER:` or `COORDINATOR:` on its first line."""
 
 
 def require_config() -> tuple[str, str, str]:
@@ -189,6 +191,7 @@ def set_state(
     state = request.get("state")
     if state not in STATES:
         raise ValueError("Unknown coordinator state")
+    _, team_field_id, _ = config
     strict = state in {
         "dev-bot-coordinator:active",
         "dev-bot-coordinator:complete",
@@ -201,14 +204,17 @@ def set_state(
     ):
         raise ValueError("A needs-plan project requires a fresh user-approved plan before changing state")
     if state == "dev-bot-coordinator:active":
-        _, assessment = fresh_assessment(control, config)
+        children, assessment = fresh_assessment(control, config)
         if assessment["gaps"]:
             raise ValueError("Plan gate failed: " + "; ".join(assessment["gaps"]))
+        planner_plan = current_planner_plan(control, children, team_field_id, set(load_project_repos()))
+        if not planner_plan["current"]:
+            raise ValueError("A current PLANNER plan is required before activating coordination")
     if state == "dev-bot-coordinator:complete":
         comment_id = str(request.get("request_comment_id") or "")
         if not comment_id:
             raise ValueError("Completion requires an explicit control comment ID")
-        request_comment(control, comment_id, r"^\s*/coord\s+complete\s+project\s*$")
+        request_comment(control, comment_id, r"^\s*COORDINATOR:\s*/coord\s+complete\s+project\s*$")
         children, assessment = fresh_assessment(control, config)
         if assessment["gaps"] or any(not is_complete(child) for child in children):
             raise ValueError("In-scope implementation tickets are not all complete")
@@ -253,6 +259,11 @@ def handoff(
     if "dev-bot-coordinator:needs-plan" in control_states and not approved_plan:
         raise ValueError("Plan changes are waiting for a new user approval before handoff")
     children, assessment = fresh_assessment(control, config)
+    if assessment["gaps"]:
+        raise ValueError("Plan gate failed: " + "; ".join(assessment["gaps"]))
+    planner_plan = current_planner_plan(control, children, team_field_id, set(load_project_repos()))
+    if not planner_plan["current"]:
+        raise ValueError("A current PLANNER plan is required before implementation handoff")
     if not approved_plan:
         expected_snapshot_hash = request.get("approved_plan_snapshot_hash")
         actual_snapshot_hash = ticket_plan_digest(
@@ -261,9 +272,7 @@ def handoff(
         if expected_snapshot_hash is None and "dev-bot-coordinator:active" not in control_states:
             pass
         elif expected_snapshot_hash != actual_snapshot_hash:
-            raise ValueError("Plan inputs changed after approval; publish a Plan revision and request approval")
-    if assessment["gaps"]:
-        raise ValueError("Plan gate failed: " + "; ".join(assessment["gaps"]))
+            raise ValueError("Plan inputs changed after approval; refresh the PLANNER plan and request approval")
     ticket_key = request["ticket_key"]
     ready = {item["key"]: item for item in assessment["ready"]}
     if ticket_key not in ready:
@@ -285,14 +294,19 @@ def handoff(
             raise ValueError(f"{ticket_key} is already released to the implementation bot")
         raise ValueError(f"{ticket_key} is not a runnable ticket in the lowest incomplete phase")
     child = checked_child(control, ticket_key, team_field_id)
-    if not any(PHASE_RE.fullmatch(label) for label in labels(child)):
-        raise ValueError("Implementation ticket has no phase label")
+    planned_assignment = planner_plan["assignments"].get(ticket_key)
+    if not planned_assignment:
+        raise ValueError(f"{ticket_key} is missing from the current PLANNER assignment map")
+    if planned_assignment["phase"] not in labels(child):
+        raise ValueError("Implementation ticket phase label differs from the current PLANNER plan")
     selected_repos = request.get("repos") or []
     if isinstance(selected_repos, str):
         selected_repos = [selected_repos]
     allowed = set(assessment["allowed_repos"])
     if not selected_repos or set(selected_repos) - allowed or set(selected_repos) - set(load_project_repos()):
         raise ValueError("Selected repos must be configured and allowed on the control ticket")
+    if set(selected_repos) != {planned_assignment["repository"]}:
+        raise ValueError("Selected repositories differ from the current PLANNER assignment")
     existing_repos = {label[5:] for label in labels(child) if label.startswith("repo:")}
     if existing_repos and existing_repos != set(selected_repos):
         raise ValueError("Existing ticket repo labels differ from selected repos")
@@ -302,7 +316,7 @@ def handoff(
             ticket_plan_snapshot(current_children, team_field_id, implementation_label)
         )
         if current_snapshot_hash != expected_snapshot_hash:
-            raise ValueError("Plan inputs changed during handoff validation; publish a Plan revision and request approval")
+            raise ValueError("Plan inputs changed during handoff validation; refresh the PLANNER plan and request approval")
         child = next(item for item in current_children if key_of(item) == ticket_key)
     handoff_labels = repository_handoff_labels(selected_repos, implementation_label)
     updated = labels(child) + handoff_labels
@@ -408,7 +422,7 @@ def request_comment(
     if is_own_comment(item):
         raise ValueError("Coordinator-authored comments cannot authorize actions")
     if not is_coordination_feedback(item):
-        raise ValueError("Planner comments cannot authorize coordinator actions")
+        raise ValueError("Coordinator actions require a first-line COORDINATOR: comment")
     if not re.search(command_pattern, body, re.IGNORECASE):
         raise ValueError(f"User comment does not contain {requirement}")
     return item
@@ -486,6 +500,8 @@ def published_plan_revision(control: dict, approval_comment_id: str) -> dict | N
             continue
         lines = [line.strip() for line in comment_body(item).splitlines() if line.strip()]
         heading = lines[0].lstrip("#").strip() if lines else ""
+        if heading.casefold().startswith("coordinator:"):
+            heading = heading[len("COORDINATOR:"):].strip()
         if re.fullmatch(rf"{re.escape(OWN_COMMENT_PREFIX)} - Plan revision #\d+", heading, re.IGNORECASE):
             revision = item
     if revision is None:
@@ -520,12 +536,7 @@ def approve_setup(request: dict, config: tuple[str, str, str]) -> dict:
     else:
         proposal = setup_proposal(control, comment_id, request.get("proposal"))
 
-    repo_name = proposal.get("repository")
     repo_names = set(load_project_repos())
-    if not isinstance(repo_name, str) or repo_name not in repo_names:
-        raise ValueError("Setup proposal repository is not configured")
-    repository_handoff_labels([repo_name], implementation_label)
-
     assignments = proposal.get("phase_assignments")
     if not isinstance(assignments, dict):
         raise ValueError("Setup proposal must include phase_assignments")
@@ -556,6 +567,38 @@ def approve_setup(request: dict, config: tuple[str, str, str]) -> dict:
             + (f"; missing {', '.join(sorted(missing))}" if missing else "")
             + (f"; out of scope {', '.join(sorted(unknown))}" if unknown else "")
         )
+    current_ticket_snapshot_hash = ticket_plan_digest(
+        ticket_plan_snapshot(children, team_field_id, implementation_label)
+    )
+    if proposal.get("ticket_snapshot_hash") != current_ticket_snapshot_hash:
+        raise ValueError("Tickets changed after the coordinator label proposal; refresh it before approval")
+    planner_plan = current_planner_plan(control, children, team_field_id, repo_names)
+    if not planner_plan["current"]:
+        raise ValueError("No current PLANNER technical plan covers every same-Team implementation ticket")
+    if (proposal.get("planner_comment_id") != planner_plan["comment_id"]
+            or proposal.get("planner_input_snapshot_hash") != planner_plan["input_snapshot_hash"]):
+        raise ValueError("Setup proposal does not reference the latest current PLANNER plan")
+    ticket_repositories = proposal.get("ticket_repositories")
+    if ticket_repositories is None:
+        default_repository = proposal.get("repository")
+        if not isinstance(default_repository, str) or default_repository not in repo_names:
+            raise ValueError("Setup proposal must include configured ticket_repositories or a configured repository")
+        repo_by_ticket = {key: default_repository for key in child_keys}
+    else:
+        if not isinstance(ticket_repositories, dict) or set(ticket_repositories) != child_keys:
+            raise ValueError("Setup proposal must assign a configured repository to every implementation ticket")
+        if any(not isinstance(repo, str) or repo not in repo_names for repo in ticket_repositories.values()):
+            raise ValueError("Setup proposal contains an unconfigured ticket repository")
+        repo_by_ticket = dict(ticket_repositories)
+    expected_phases = {
+        key: assignment["phase"] for key, assignment in planner_plan["assignments"].items()
+    }
+    expected_repositories = {
+        key: assignment["repository"] for key, assignment in planner_plan["assignments"].items()
+    }
+    if phase_by_ticket != expected_phases or repo_by_ticket != expected_repositories:
+        raise ValueError("Setup labels must match the latest PLANNER phase and repository assignments")
+    repository_handoff_labels(sorted(set(repo_by_ticket.values())), implementation_label)
     if revision_proposal is not None:
         expected_snapshot_hash = revision_proposal.get("ticket_snapshot_hash")
         actual_snapshot = ticket_plan_snapshot(children, team_field_id, implementation_label)
@@ -584,17 +627,25 @@ def approve_setup(request: dict, config: tuple[str, str, str]) -> dict:
         child = fresh_children[ticket_key]
         existing = labels(child)
         existing_phases = {label for label in existing if PHASE_RE.fullmatch(label)}
-        if existing_phases - {phase}:
+        existing_repositories = {label[5:] for label in existing if label.startswith("repo:")}
+        selected_repository = repo_by_ticket[ticket_key]
+        if existing_phases - {phase} or existing_repositories - {selected_repository}:
             status = value(child, "status") or {}
             status = str(status.get("name", "") if isinstance(status, dict) else status).lower()
             if implementation_label in existing or status not in START_STATUSES:
-                raise ValueError(f"Cannot rephase handed-off or started ticket {ticket_key}")
-        updated = [label for label in existing if not PHASE_RE.fullmatch(label)] + [phase]
+                raise ValueError(f"Cannot change phase or repository for handed-off or started ticket {ticket_key}")
+        updated = [label for label in existing if not PHASE_RE.fullmatch(label) and not label.startswith("repo:")]
+        updated.extend([phase, f"repo:{selected_repository}"])
         phase_updates[ticket_key] = updated
 
-    control_repo_label = f"repo:{repo_name}"
-    if control_repo_label not in current_control_labels:
-        set_labels(key_of(control), current_control_labels + [control_repo_label])
+    selected_repositories = sorted(set(repo_by_ticket.values()))
+    updated_control_labels = [label for label in current_control_labels if not label.startswith("repo:")]
+    updated_control_labels.extend(f"repo:{repo}" for repo in selected_repositories)
+    control_repo_labels_added = sorted(
+        set(updated_control_labels) - set(current_control_labels)
+    )
+    if set(updated_control_labels) != set(current_control_labels):
+        set_labels(key_of(control), updated_control_labels)
     updated_phases: list[str] = []
     for ticket_key, updated in sorted(phase_updates.items()):
         if set(updated) != set(labels(fresh_children[ticket_key])):
@@ -612,7 +663,7 @@ def approve_setup(request: dict, config: tuple[str, str, str]) -> dict:
                 label[5:] for label in labels(children_by_key[ticket_key])
                 if label.startswith("repo:")
             }
-            selected_repos = sorted(child_repos) or [repo_name]
+            selected_repos = sorted(child_repos) or [repo_by_ticket[ticket_key]]
             try:
                 handoff(
                     {"control_key": key_of(control), "ticket_key": ticket_key, "repos": selected_repos},
@@ -638,8 +689,8 @@ def approve_setup(request: dict, config: tuple[str, str, str]) -> dict:
     final_children, _ = fresh_assessment(refreshed_control, config)
     return {
         "control_key": key_of(control),
-        "repository": repo_name,
-        "control_repo_label_added": control_repo_label not in current_control_labels,
+        "repositories": selected_repositories,
+        "control_repo_labels_added": control_repo_labels_added,
         "phase_labels_updated": updated_phases,
         "approval_comment_id": comment_id,
         "handed_off": handed_off,
@@ -688,13 +739,13 @@ def create_ticket(request: dict, config: tuple[str, str, str]) -> dict:
     comment_id = str(request.get("request_comment_id") or "")
     if not comment_id:
         raise ValueError("request_comment_id is required")
-    command = request_comment(control, comment_id, r"^\s*/coord\s+create\s+P-\d+\b")
+    command = request_comment(control, comment_id, r"^\s*COORDINATOR:\s*/coord\s+create\s+P-\d+\b")
     summary = str(request.get("summary") or "").strip()
     description = str(request.get("description") or "").strip()
     if not summary or not description:
         raise ValueError("Summary and description are required")
     proposal_id = str(request.get("proposal_id") or "")
-    if not re.fullmatch(r"P-\d+", proposal_id) or not re.search(rf"^\s*/coord\s+create\s+{proposal_id}\b", comment_body(command), re.IGNORECASE):
+    if not re.fullmatch(r"P-\d+", proposal_id) or not re.search(rf"^\s*COORDINATOR:\s*/coord\s+create\s+{proposal_id}\b", comment_body(command), re.IGNORECASE):
         raise ValueError("Creation request must name an existing proposal ID")
     if not any(
         is_own_comment(item) and proposal_id in comment_body(item)
@@ -746,6 +797,8 @@ def comment_control(request: dict, config: tuple[str, str, str]) -> dict:
     body_lines = body.splitlines()
     while body_lines:
         heading = body_lines[0].strip().lstrip("#").strip().casefold()
+        if heading.startswith("coordinator:"):
+            heading = heading[len("coordinator:"):].strip()
         prefix = OWN_COMMENT_PREFIX.casefold()
         if heading != prefix and not heading.startswith(prefix + " -"):
             break
@@ -774,7 +827,7 @@ def comment_control(request: dict, config: tuple[str, str, str]) -> dict:
         return {"control_key": key_of(control), "commented": False, "action_id": action_id}
     update_number = sum(1 for item in existing_comments if is_own_comment(item)) + 1
     footer = "### Possible next steps\n" + "\n".join(f"- {step.strip()}" for step in next_steps)
-    heading = f"### {OWN_COMMENT_PREFIX} - {comment_type} #{update_number}"
+    heading = f"COORDINATOR: {OWN_COMMENT_PREFIX} - {comment_type} #{update_number}"
     comment = f"{heading}\n\n{body}\n\n{footer}\n\n{COMMAND_HELP_FOOTER}\n\n{marker}"
     call_write("jira_add_comment", {"issue_key": key_of(control), "comment": comment})
     return {"control_key": key_of(control), "commented": True, "action_id": action_id}

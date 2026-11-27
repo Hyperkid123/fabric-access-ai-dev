@@ -24,8 +24,8 @@ JQL_VALUE_RE = re.compile(r"^[A-Za-z0-9:_-]+$")
 COMPLETE_STATUSES = frozenset({"done", "closed", "resolved", "release pending"})
 START_STATUSES = frozenset({"new", "backlog", "refinement", "to do"})
 UNASSIGNED_MARKERS = frozenset({"", "unassigned", "unassigned user"})
-PLANNER_COMMAND = re.compile(r"/coord[ \t]+planner(?:\s+(.+))?", re.IGNORECASE | re.DOTALL)
-PLANNER_HEADING = "Planner update - Technical plan"
+PLANNER_COMMAND = re.compile(r"PLANNER:[ \t]*/coord[ \t]+plan(?:[ \t]+(.+))?", re.IGNORECASE)
+PLANNER_HEADING = "PLANNER: Planner update - Technical plan"
 PLANNER_RECEIPT = "Planner request comment:"
 PLANNER_REQUEST_DIR = Path("data/planner-requests")
 COMMENT_ID = re.compile(r"[1-9][0-9]*")
@@ -38,6 +38,7 @@ COORD_STATES = frozenset(
     }
 )
 OWN_COMMENT_PREFIX = "Coordinator update"
+COORDINATOR_ROLE_PREFIX = "COORDINATOR:"
 PAGE_SIZE = 50
 
 
@@ -264,6 +265,8 @@ def is_own_comment(comment: dict) -> bool:
     if not lines:
         return False
     heading = lines[0].lstrip("#").strip().casefold()
+    if heading.startswith(COORDINATOR_ROLE_PREFIX.casefold()):
+        heading = heading[len(COORDINATOR_ROLE_PREFIX):].strip()
     prefix = OWN_COMMENT_PREFIX.casefold()
     if heading == prefix or heading.startswith(prefix + " -"):
         return True
@@ -271,21 +274,43 @@ def is_own_comment(comment: dict) -> bool:
 
 
 def planner_focus(comment: dict) -> str | None:
-    """An explicit planner command may include optional focus after the command."""
-    match = PLANNER_COMMAND.fullmatch(comment_body(comment).strip())
-    return (match[1] or "").strip() if match else None
+    """Only a first-line PLANNER route can request a technical plan."""
+    lines = comment_body(comment).strip().splitlines()
+    if not lines:
+        return None
+    match = PLANNER_COMMAND.fullmatch(lines[0].strip())
+    if match:
+        return "\n".join([match[1] or "", *lines[1:]]).strip()
+    return None
 
 
 def planner_receipt(comment: dict) -> str | None:
     lines = comment_body(comment).strip().splitlines()
-    if not lines or not lines[0].lstrip("#").strip().startswith(PLANNER_HEADING):
+    if not lines or not lines[0].lstrip("#").strip().casefold().startswith("planner: planner update -"):
         return None
     marker = re.fullmatch(rf"{re.escape(PLANNER_RECEIPT)} ([1-9][0-9]*)", lines[-1].strip())
     return marker[1] if marker else None
 
 
+def planner_coordination(comment: dict) -> dict | None:
+    """Read the planner's machine-readable Jira label assignments."""
+    body = comment_body(comment)
+    if not planner_receipt(comment) or not body.splitlines()[0].strip().casefold().startswith(PLANNER_HEADING.casefold()):
+        return None
+    match = re.search(r"```planner-coordination\s*(.*?)\s*```", body, re.IGNORECASE | re.DOTALL)
+    if not match:
+        return None
+    try:
+        proposal = json.loads(match[1])
+    except json.JSONDecodeError:
+        return None
+    return proposal if isinstance(proposal, dict) else None
+
+
 def is_coordination_feedback(comment: dict) -> bool:
-    return not is_own_comment(comment) and planner_focus(comment) is None and planner_receipt(comment) is None
+    lines = comment_body(comment).strip().splitlines()
+    routed_to_coordinator = bool(lines and lines[0].strip().casefold().startswith(COORDINATOR_ROLE_PREFIX.casefold()))
+    return routed_to_coordinator and not is_own_comment(comment) and planner_focus(comment) is None and planner_receipt(comment) is None
 
 
 def planner_request_path(control_key: str, comment_id: str) -> Path:
@@ -584,6 +609,72 @@ def ticket_plan_digest(snapshot: dict[str, dict]) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+def planner_ticket_snapshot(children: list[dict], team_field_id: str) -> dict[str, dict]:
+    """Hash only ticket scope inputs; planner-assigned phase/repo labels are outputs."""
+    snapshot = {}
+    for issue in sorted(children, key=key_of):
+        blockers, related = linked_issues(issue)
+        priority = value(issue, "priority") or {}
+        issue_type = value(issue, "issuetype") or value(issue, "issue_type") or {}
+        snapshot[key_of(issue)] = {
+            "summary": str(value(issue, "summary") or "").strip(),
+            "description": str(value(issue, "description") or ""),
+            "priority": str(priority.get("name") or priority.get("id") or "") if isinstance(priority, dict) else str(priority),
+            "issue_type": str(issue_type.get("name") or "") if isinstance(issue_type, dict) else str(issue_type),
+            "team_id": team_id(issue, team_field_id),
+            "blockers": sorted(blockers),
+            "related": sorted(related),
+        }
+    return snapshot
+
+
+def current_planner_plan(
+    control: dict, children: list[dict], team_field_id: str, repository_names: set[str],
+) -> dict:
+    """Return the newest planner assignment block and whether it covers current tickets."""
+    expected_tickets = {key_of(item) for item in children}
+    current_hash = ticket_plan_digest(planner_ticket_snapshot(children, team_field_id))
+    for comment in reversed(comments(control)):
+        if not planner_receipt(comment):
+            continue
+        proposal = planner_coordination(comment)
+        if proposal is None:
+            return {
+                "comment_id": str(comment.get("id") or ""),
+                "assignments": {},
+                "current": False,
+                "input_snapshot_hash": None,
+                "current_snapshot_hash": current_hash,
+            }
+        assignments = proposal.get("ticket_assignments")
+        valid = (
+            isinstance(assignments, dict)
+            and set(assignments) == expected_tickets
+            and proposal.get("input_snapshot_hash") == current_hash
+        )
+        if valid:
+            for assignment in assignments.values():
+                if (not isinstance(assignment, dict)
+                        or not PHASE_RE.fullmatch(str(assignment.get("phase") or ""))
+                        or assignment.get("repository") not in repository_names):
+                    valid = False
+                    break
+        return {
+            "comment_id": str(comment.get("id") or ""),
+            "assignments": assignments if isinstance(assignments, dict) else {},
+            "current": bool(valid),
+            "input_snapshot_hash": proposal.get("input_snapshot_hash"),
+            "current_snapshot_hash": current_hash,
+        }
+    return {
+        "comment_id": None,
+        "assignments": {},
+        "current": False,
+        "input_snapshot_hash": None,
+        "current_snapshot_hash": current_hash,
+    }
+
+
 def evaluate(control: dict, children: list[dict], repo_names: set[str], implementation_label: str) -> dict:
     """Mechanical plan checks. The agent still judges requirement quality."""
     control_labels = labels(control)
@@ -682,6 +773,10 @@ def fingerprint(parent: dict, control: dict, children: list[dict], team_field_id
             "team": team_id(control, team_field_id),
             "labels": sorted(label for label in labels(control) if label not in COORD_STATES),
             "comments": human_comments,
+            "latest_planner_receipt": next(
+                (planner_receipt(comment) for comment in reversed(comments(control)) if planner_receipt(comment)),
+                None,
+            ),
         },
         "children": [
             {
@@ -753,6 +848,7 @@ def main() -> None:
             parent_issue = get_issue(parent)
             siblings = search_all(f'parent = "{parent}" ORDER BY key ASC')
             children = implementation_children(siblings, control, team_field_id)
+            planner_plan = current_planner_plan(control, children, team_field_id, repo_names)
             other_controls = [issue for issue in children if control_label in labels(issue)]
             assessment = evaluate(control, children, repo_names, implementation_label)
             if not control_team_id:
@@ -802,6 +898,8 @@ def main() -> None:
                     "parent_key": parent,
                     "team_id": control_team_id,
                     "team_field_id": team_field_id,
+                    "planner_plan": planner_plan,
+                    "planner_plan_current": planner_plan["current"],
                     "snapshot_hash": digest,
                     "plan_snapshot": plan_snapshot,
                     "plan_snapshot_hash": plan_snapshot_hash,

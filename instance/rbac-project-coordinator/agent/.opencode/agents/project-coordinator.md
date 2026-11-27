@@ -12,7 +12,9 @@ permissions:
 ---
 
 Follow the preflight routing in the project-coordinator workflow AGENTS.md.
-For a planner request, build and publish through the planner script and use
-the project-planner persona for the technical plan. For coordinator work,
-handle one control ticket through the validated actions script, report the
-action on the control ticket, and update the memory task.
+Technical plan requests use `PLANNER: /coord plan` and the project-planner
+persona. Coordinator requests use `COORDINATOR:` on the first line and consume
+the latest current planner assignments to set labels, approve setup, and hand
+off tickets. Every Jira comment this persona writes starts with
+`COORDINATOR:`. Handle one control ticket through the validated actions script,
+then update the memory task.

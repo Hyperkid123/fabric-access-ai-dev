@@ -34,33 +34,46 @@ def relative_parts(path: str) -> list[str]:
     return parts
 
 
-def docs_location(base: str) -> tuple[str, str, list[str], str]:
-    """Resolve a trusted GitHub or GitLab base URL to repository, ref, and folder."""
+def docs_location(base: str, *, trusted_gitlab_base: str = "") -> tuple[str, str, list[str], str, str]:
+    """Resolve a GitHub or GitLab repository, tree, or blob URL."""
     url = urlsplit(base)
     if (url.scheme != "https" or not url.hostname or url.netloc != url.hostname
-            or url.query or url.fragment):
-        raise ValueError("BOT_PLANNER_DOCS_BASE_URL must be an HTTPS Git repository or tree URL")
-    parts = relative_parts(unquote(url.path.strip("/")))
+            or url.query or url.fragment or url.username or url.password):
+        raise ValueError("Project documentation URLs must be HTTPS repository, tree, or blob URLs")
+    parts = relative_parts("/".join(unquote(part) for part in url.path.strip("/").split("/")))
     github = url.hostname == "github.com"
-    marker = "tree" if github else "-"
-    if github and len(parts) > 2:
-        owner_repo, tree = parts[:2], parts[2:]
-    elif not github and marker in parts:
-        index = parts.index(marker)
-        owner_repo, tree = parts[:index], parts[index + 1:]
+    trusted_gitlab_host = urlsplit(trusted_gitlab_base).hostname
+    is_gitlab_host = url.hostname == "gitlab.com" or url.hostname.startswith("gitlab.")
+    if not github and not is_gitlab_host and url.hostname != trusted_gitlab_host:
+        raise ValueError("Project documentation must use GitHub or a GitLab host")
+    if github:
+        if len(parts) < 2:
+            raise ValueError("GitHub URL must identify an owner and repository")
+        owner_repo, suffix = parts[:2], parts[2:]
+        marker_index = 0
     else:
-        owner_repo, tree = parts, []
-    if len(owner_repo) < 2:
-        raise ValueError("the docs base must identify a Git repository")
-    if tree and (len(tree) < 2 or tree[0] != "tree"):
-        raise ValueError("use a repository root or a tree URL for the docs base")
-    if not github and marker in parts and not tree:
-        raise ValueError("a GitLab tree URL must include a ref")
-    ref, folder = (tree[1], tree[2:]) if tree else ("HEAD", [])
+        marker_index = parts.index("-") if "-" in parts else len(parts)
+        owner_repo, suffix = parts[:marker_index], parts[marker_index:]
+        if len(owner_repo) < 2:
+            raise ValueError("GitLab URL must identify a project repository")
+    kind = "tree"
+    if suffix:
+        if github:
+            if suffix[0] not in {"tree", "blob"} or len(suffix) < 2:
+                raise ValueError("Use a GitHub repository, tree, or blob URL")
+            kind, ref, folder = suffix[0], suffix[1], suffix[2:]
+        else:
+            if len(suffix) < 3 or suffix[0] != "-" or suffix[1] not in {"tree", "blob"}:
+                raise ValueError("Use a GitLab repository, /-/tree, or /-/blob URL")
+            kind, ref, folder = suffix[1], suffix[2], suffix[3:]
+    else:
+        ref, folder = "HEAD", []
+    if kind == "blob" and not folder:
+        raise ValueError("A blob URL must identify a file")
     if ref.startswith("-"):
         raise ValueError("invalid documentation ref")
     repo = f"https://{url.hostname}/" + "/".join(quote(part, safe="") for part in owner_repo)
-    return repo.removesuffix(".git"), ref, folder, "" if github else "/-"
+    return repo.removesuffix(".git"), ref, folder, "" if github else "/-", kind
 
 
 def git(directory: Path, *args: str) -> bytes:
@@ -90,38 +103,68 @@ def jira_reference(location: str) -> str | None:
 def read_project_docs(
     request: dict, directory: Path, load_jira_document: Callable[[str], dict],
 ) -> tuple[list[dict], list[str]]:
-    source = request["parent"]
-    git_path = None
+    repo_labels = request["parent"].get("repo_labels") or []
+    control = request.get("control") or {}
+    parent = request["parent"]
+    # Without repo labels, the control ticket is the only documentation
+    # declaration surface. This prevents an undeclared parent brief from
+    # becoming implicit planner context.
+    if repo_labels:
+        sources = [parent, control]
+    else:
+        sources = [control]
     jira_keys: dict[str, None] = {}
     warnings = []
-    for match in DOC_DECLARATION.findall(source["description"]):
-        location = match.strip().strip("'\"`")
-        try:
-            key = jira_reference(location)
-            if key:
-                jira_keys.setdefault(key, None)
+    git_locations: list[tuple[dict, str, str]] = []
+    for source in sources:
+        for match in DOC_DECLARATION.findall(source.get("description") or ""):
+            location = match.strip().strip("'\"`")
+            try:
+                key = jira_reference(location)
+                if key:
+                    jira_keys.setdefault(key, None)
+                    continue
+                parsed_url = urlsplit(location)
+                if parsed_url.scheme:
+                    docs_location(location, trusted_gitlab_base=request.get("docs_base", ""))
+                else:
+                    relative_parts(location)
+            except ValueError:
+                warnings.append(
+                    f"Project documentation in {source.get('key', 'the control ticket')} must be a GitHub/GitLab repository, tree, or blob URL, a relative Git path, a Jira issue key, or a Jira issue URL."
+                )
                 continue
-            relative_parts(location)
-        except ValueError:
-            warnings.append(
-                f"Project documentation in {source['key']} must be a relative Git path, "
-                "Jira issue key, or Jira issue URL."
-            )
-            continue
-        if git_path is None:
-            git_path = location
-        else:
-            warnings.append(f"Skipped additional Git documentation path `{location}` in {source['key']}.")
+            git_locations.append((source, location, source.get("description") or ""))
 
     documents = []
-    if git_path is not None:
-        git_docs, git_warnings = read_git_docs(request, source, git_path, directory)
+    git_bytes = 0
+    for source, location, description in git_locations[:MAX_DOC_FILES]:
+        git_request = {**request, "source_description": description}
+        git_docs, git_warnings = read_git_docs(git_request, source, location, directory)
+        remaining = max(0, MAX_TOTAL_DOC_BYTES - git_bytes)
+        selected = []
+        for document in git_docs:
+            try:
+                size = Path(document["path"]).stat().st_size
+            except OSError:
+                continue
+            if len(selected) >= MAX_DOC_FILES - len(documents) or size > remaining:
+                warnings.append("Skipped project documentation files because the combined file or text limit was reached.")
+                break
+            selected.append(document)
+            git_bytes += size
+            remaining -= size
+        git_docs = selected
         documents.extend(git_docs)
         warnings.extend(git_warnings)
-    jira_bytes = 0
-    for key in list(jira_keys)[:MAX_DOC_FILES]:
+    if len(git_locations) > MAX_DOC_FILES:
+        warnings.append(f"Read only the first {MAX_DOC_FILES} Git project documentation references.")
+    jira_bytes = git_bytes
+    available_jira_slots = max(0, MAX_DOC_FILES - len(documents))
+    for key in list(jira_keys)[:available_jira_slots]:
         try:
-            issue = source if key == source["key"] else load_jira_document(key)
+            issue = next((item for item in [*sources, control, parent] if item.get("key") == key), None)
+            issue = issue if issue is not None else load_jira_document(key)
             description = issue["description"].strip()
             if not description:
                 warnings.append(f"Jira project documentation {key} has an empty description.")
@@ -141,21 +184,32 @@ def read_project_docs(
             jira_bytes += size
         except (OSError, RuntimeError, ValueError) as exc:
             warnings.append(f"Could not load Jira project documentation {key}: {exc}.")
-    if len(jira_keys) > MAX_DOC_FILES:
-        warnings.append(f"Read only the first {MAX_DOC_FILES} Jira project documentation references.")
+    if len(jira_keys) > available_jira_slots:
+        skipped = len(jira_keys) - available_jira_slots
+        warnings.append(f"Skipped {skipped} Jira project documentation reference(s) because the combined file limit was reached.")
     return documents, warnings
 
 
 def read_git_docs(request: dict, source: dict, location: str, directory: Path) -> tuple[list[dict], list[str]]:
-    filters = FILTER_DECLARATION.findall(source["description"])
+    description = request.get("source_description") or source.get("description") or ""
+    filters = FILTER_DECLARATION.findall(description)
     pattern = filters[0].strip().strip("'\"`") if filters else request["docs_glob"]
     warnings = []
-    if not request["docs_base"]:
-        return [], [f"Git project documentation `{location}` needs BOT_PLANNER_DOCS_BASE_URL."]
-
     try:
-        repo, ref, folder, web_prefix = docs_location(request["docs_base"])
-        path = "/".join([*folder, *relative_parts(location)])
+        if urlsplit(location).scheme:
+            repo, ref, parts, web_prefix, kind = docs_location(
+                location, trusted_gitlab_base=request.get("docs_base", ""),
+            )
+            path = "/".join(parts)
+            exact_blob = kind == "blob"
+        else:
+            if not request["docs_base"]:
+                return [], [f"Relative Git project documentation `{location}` needs BOT_PLANNER_DOCS_BASE_URL."]
+            repo, ref, folder, web_prefix, kind = docs_location(request["docs_base"])
+            if kind != "tree":
+                raise ValueError("BOT_PLANNER_DOCS_BASE_URL must identify a repository or directory")
+            path = "/".join([*folder, *relative_parts(location)])
+            exact_blob = False
         if not pattern:
             raise ValueError("the project documentation filter is empty")
         with tempfile.TemporaryDirectory(prefix="project-docs-") as scratch:
@@ -163,7 +217,7 @@ def read_git_docs(request: dict, source: dict, location: str, directory: Path) -
             git(git_dir, "init", "--bare", "--quiet")
             git(git_dir, "fetch", "--no-tags", "--depth=1", "--", repo + ".git", ref)
             revision = git(git_dir, "rev-parse", "FETCH_HEAD").decode().strip()
-            records = git(git_dir, "ls-tree", "-rlz", revision, "--", path)
+            records = git(git_dir, "ls-tree", "-rlz", revision, *( ["--", path] if path else [] ))
             documents = []
             total = 0
             matched = 0
@@ -175,8 +229,13 @@ def read_git_docs(request: dict, source: dict, location: str, directory: Path) -
                 mode, kind, blob, size_text = header.split()
                 if kind != "blob" or mode not in {"100644", "100755"}:
                     continue
+                if exact_blob and filename != path:
+                    continue
                 if filename != path:
-                    if not filename.startswith(path + "/") or not fnmatchcase(filename[len(path) + 1:], pattern):
+                    if path and not filename.startswith(path + "/"):
+                        continue
+                    relative = filename[len(path) + 1:] if path else filename
+                    if not fnmatchcase(relative, pattern):
                         continue
                 matched += 1
                 size = int(size_text)
@@ -203,7 +262,7 @@ def read_git_docs(request: dict, source: dict, location: str, directory: Path) -
                 total += size
             if not matched:
                 warnings.append(
-                    f"Project documentation `{location}` in {source['key']} was not found "
+                    f"Project documentation `{location}` in {source.get('key', 'the control ticket')} was not found "
                     f"or no files matched `{pattern}`."
                 )
             if omitted:
@@ -212,12 +271,12 @@ def read_git_docs(request: dict, source: dict, location: str, directory: Path) -
                 )
             return documents, warnings
     except SAFE_ERRORS as exc:
-        return [], [*warnings, f"Could not load project documentation `{location}` for {source['key']}: {exc}."]
+        return [], [*warnings, f"Could not load project documentation `{location}` for {source.get('key', 'the control ticket')}: {exc}."]
 
 
 def review_sources(labels: list[str], directory: Path) -> tuple[list[dict], list[dict], list[str]]:
     if not labels:
-        return [], [], ["No repo: labels were found for selecting repository context."]
+        return [], [], []
     try:
         config = load_config(REVIEW_AGENT / "review-context.yaml")["repositories"]
         allowlist = json.loads((REVIEW_AGENT / "project-repos.json").read_text())
@@ -285,17 +344,25 @@ def build_context(
     project_docs, project_warnings = read_project_docs(request, directory, load_jira_document)
     repos, review_docs, repo_warnings = review_sources(request["parent"]["repo_labels"], directory)
     warnings = [*request["warnings"], *project_warnings, *repo_warnings]
+    context_available = bool(project_docs or repos or review_docs)
+    if not context_available:
+        warnings.append("No project documentation or selected repository context was available; no technical plan will be drafted.")
     manifest = {
         "control_key": request["control_key"],
         "comment_id": request["comment_id"],
+        "control": request["control"],
         "parent": request["parent"],
+        "implementation_tickets": request["implementation_tickets"],
+        "ticket_snapshot_hash": request["ticket_snapshot_hash"],
+        "available_repositories": request["available_repositories"],
         "focus": request["focus"],
         "request_id": request["request_id"],
         "project_documents": project_docs,
         "repo_checkouts": repos,
         "review_documents": review_docs,
+        "context_available": context_available,
         "warnings": warnings,
     }
     manifest_path = directory / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    return {"status": "context_ready", "manifest": str(manifest_path), "warnings": warnings}
+    return {"status": "context_ready" if context_available else "context_missing", "manifest": str(manifest_path), "warnings": warnings}

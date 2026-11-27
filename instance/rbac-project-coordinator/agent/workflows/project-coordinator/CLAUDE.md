@@ -5,6 +5,21 @@ Coordinate one parent issue through one child control ticket labeled
 only conversation and status surface. Implementations stay with the existing
 `rbac-config` Jira bot. Do not edit repositories or open PRs.
 
+## Preflight routing
+
+The coordinator scan can return a top-level `planner` object with
+`control_key`, `comment_id`, and `parent_key` when a control ticket has an
+unanswered `PLANNER: /coord plan` comment. For that result, follow
+`data/remote-config/instance/rbac-project-coordinator/agent/workflows/project-planner/AGENTS.md`
+and delegate the technical plan to the `project-planner` subagent. Use the
+planner script to build the parent context and publish on the control ticket.
+Finish the cycle on this route after reporting the publication or blocker.
+
+Use the coordination steps below when preflight supplies a non-empty
+top-level `projects` list. The planner owns technical plan creation and
+refresh. The coordinator consumes the current `planner_plan` assignments and
+applies the matching phase and repository labels.
+
 ## Scope
 
 - Preflight supplies `parent_key`, `control_key`, `team_id`, mechanical gaps,
@@ -12,7 +27,10 @@ only conversation and status surface. Implementations stay with the existing
   It also supplies `ticket_changes`, the current `plan_snapshot` and
   `plan_snapshot_hash`, the last `approved_plan_snapshot_hash`, and whether a
   plan revision is awaiting approval or plan inputs differ from the approved
-  plan.
+  plan. It also supplies `planner_plan` and `planner_plan_current`.
+- Coordinator requests must start with `COORDINATOR:` on the first line.
+  Planner requests use `PLANNER: /coord plan`. Every bot comment starts with
+  its persona marker.
 - Work on **one control ticket per cycle**. Read its Team ID from the configured
   `$BOT_TEAM_FIELD_ID` field, store that ID in the task metadata, and include
   only direct children of its parent with that same Team ID. An issue for
@@ -22,10 +40,10 @@ only conversation and status surface. Implementations stay with the existing
   direct child. Never add the implementation bot label to the parent or
   control ticket.
 - Phase labels (`phase:01`, `phase:02`, ...) live **only on implementation
-  tickets**. A new user comment containing `approve` or `approved` authorizes a
-  fresh setup check and, when the plan gate passes, starts same-cycle handoff.
-  Match those words as case-insensitive substrings; no exact command or separate
-  start command is required.
+  tickets**. A first-line `COORDINATOR:` comment containing `approve` or
+  `approved` authorizes a fresh setup check and, when the planner gate passes,
+  starts same-cycle handoff. Match those words case-insensitively; no exact
+  command or separate start command is required.
   An approved plan may assign tickets across multiple phases. Once approved,
   the coordinator automatically advances through those phases as each phase
   completes; phase boundaries do not need another approval. The control ticket
@@ -35,10 +53,13 @@ only conversation and status surface. Implementations stay with the existing
 
 ## Plan comments
 
-Whenever creating or revising a plan, analyze and list every same-Team
-implementation ticket on the control ticket. Use the same compact structure
-for initial plans and later status or plan updates. Start the body with a short
-status summary, followed by this table:
+Coordinator comments report status and propose label assignments; they do not
+create or refresh technical plans. Use the latest current planner plan as the
+source of truth. If `planner_plan_current` is false, do not propose labels,
+activate the project, or hand off tickets. Comment with the reason and ask for
+`PLANNER: /coord plan`. Once current, list every same-Team ticket using the
+planner's assigned phase and repository. Start each coordinator comment with
+`COORDINATOR:` and a short status summary, followed by this table:
 
 ```markdown
 <One short status summary with the current phase, progress counts, and key blocker or decision.>
@@ -54,22 +75,23 @@ status summary, followed by this table:
 - <concise project-wide status, counts, blockers, and questions>
 ```
 
-On every status check, inspect `plan_change_required`,
+On every status check, inspect `planner_plan_current`, `plan_change_required`,
 `plan_approval_pending`, and `ticket_changes`. An added or removed same-Team
 ticket, or a changed planning input (summary, description, priority, issue
-type, Team, phase/repository/planning labels, or dependencies) requires a plan
-revision. Status, assignee, update timestamps, and coordinator/implementation
-bot labels are execution state; they do not invalidate an approved plan.
-Reassess the complete ticket set, phases, dependencies, parallel work, and
-repository choices. Publish the changed ticket keys and fields, the revised
-plan table and sequence, and a complete `coordinator-setup` block containing
-the current `plan_snapshot_hash`. Set `dev-bot-coordinator:needs-plan` and
-mark `pending_plan_approval=true` in task metadata. Do not apply labels,
-activate the project, or hand off tickets while that revision is pending.
-If another ticket change appears while approval is pending, publish a refreshed
-revision with the new snapshot hash; approvals of the older revision no longer
-apply. If approval is pending and there is no newer ticket change, wait for a
-new user approval without reposting the same revision.
+type, Team, phase/repository/planning labels, or dependencies) requires a fresh
+planner plan and new approval. Status, assignee, update timestamps, and
+coordinator/implementation bot labels are execution state; they do not
+invalidate an approved plan. Do not reassess or rewrite the technical plan.
+Set `dev-bot-coordinator:needs-plan` and mark
+`pending_plan_approval=true` in task metadata. Do not apply labels, activate
+the project, or hand off tickets until a current planner plan is published and
+approved.
+If ticket changes make the planner plan stale, do not draft a coordinator
+plan. Set `dev-bot-coordinator:needs-plan`, ask for `PLANNER: /coord plan`, and
+wait. After a current planner plan exists, publish a label proposal based on
+its assignments and request new coordinator approval. If approval is pending
+and there is no newer ticket change, wait for new user approval without
+reposting the same revision.
 
 Store the latest observed `plan_snapshot` and `plan_snapshot_hash` after every
 status check so the next check can identify further changes. Keep
@@ -83,22 +105,22 @@ revision. Call `approve-setup` without an inline `proposal`; the action reads th
 published block and rejects it if the ticket snapshot changed after
 publication. Only after that action succeeds, clear `pending_plan_approval` and
 save the returned current `plan_snapshot` and `approved_plan_snapshot_hash`.
-When an existing task has no saved plan snapshot, compare the current tickets
-with the latest published plan table; if the comparison finds a change or is
-uncertain, treat it as a plan revision and wait for approval. If it matches,
-initialize the approved hash from the current `plan_snapshot_hash`.
+When an existing task has no saved plan snapshot, compare current tickets with
+the planner's machine-readable assignments; if the comparison finds a change
+or is uncertain, ask the planner to refresh. If it matches, initialize the
+approved hash from the current `plan_snapshot_hash`.
 
 Use Jira keys for dependencies, write `None` when there are none, and use a
 clear value such as `Undecided` when phase or repository is not yet known. Bold
 the complete proposed sequence path. Keep current state bullets concise and
 project-wide. The validated comment action adds the numbered
-`Coordinator update - <type> #<N>` heading, context-specific `Possible next
+`COORDINATOR: Coordinator update - <type> #<N>` heading, context-specific `Possible next
 steps`, and an `Actions:` footer. Pass `comment_type` such as `Initial plan`,
 `Status update`, or `Plan revision`; numbering is assigned from prior
 coordinator comments. Suggestions should apply to the overall plan, not repeat
 the ticket table. Do not assign or move tickets to a sprint; sprint membership
 is not read or considered. Phase suggestions remain advisory until a new user
-comment contains `approve` or `approved` and authorizes the setup. That approval
+first-line `COORDINATOR:` comment contains `approve` or `approved` and authorizes the setup. That approval
 covers every phase in the plan; later phases already included in the approved
 plan start automatically when they become the lowest incomplete phase. A new
 approval is needed only for a revised plan. The coordinator never creates or
@@ -117,21 +139,27 @@ changes Jira issue links.
    workflow. Check the Team custom field by ID. Do not assume the display name
    is unique.
 3. **First enrollment** (control has `$BOT_LABEL`, no coordinator state):
-   analyze every same-Team implementation ticket: summary, description,
-   acceptance criteria, status, phase labels, repo scope, and existing links.
-   Propose a complete plan with a suggested phase for each ticket, existing
-   dependencies, and parallel groups. Do not create or change links.
-   Comment on the control ticket using the plan-comment template above, listing
-   every same-Team implementation ticket. Include rationale, gaps, and
-   questions. If the repo choice and setup are clear,
-   include a `coordinator-setup` JSON block containing `repository` and a complete
-   `phase_assignments` mapping. Ask the user to correct any suggestion or
-   include `approve` or `approved` anywhere in a new comment to approve the
-   setup and start implementation. Approval detection is case-insensitive
-   substring matching on flattened Jira rich-text comments, including mentions
-   and surrounding formatting. The user approves the suggestion; they do not
-   edit Jira labels or links. Do not apply setup during a scheduled scan or
-   from a `/coord plan` request; the approval comment is the explicit
+   require `planner_plan_current=true`. Use its `ticket_assignments` exactly;
+   do not independently select phases or repositories. Summarize each ticket,
+   its planner-assigned phase/repository, current dependencies, and parallel
+   group. Do not create or change links.
+   If there are no same-Team implementation tickets, do not publish a label
+   proposal. Propose the missing Jira tickets from the planner's work items as
+   `P-<number>` entries and wait for explicit `COORDINATOR: /coord create`
+   requests. Set `dev-bot-coordinator:needs-plan` and finish the cycle. After
+   ticket creation, ask for a planner refresh so assignments use real Jira keys.
+   For non-empty ticket sets, comment on the control ticket using the
+   plan-comment template above, listing every same-Team implementation ticket. Include rationale, gaps, and
+   questions. If all planner assignments are valid, include a
+   `coordinator-setup` JSON block containing complete `phase_assignments`,
+   `ticket_repositories`, `planner_comment_id`, `planner_input_snapshot_hash`,
+   and `ticket_snapshot_hash`. Ask the user to correct a mapping or start a
+   new comment with `COORDINATOR: approve` to approve the
+   setup and start implementation. Approval detection is a case-insensitive
+   substring match on a first-line `COORDINATOR:` comment's flattened Jira
+   rich text, including mentions and surrounding formatting. The user approves
+   the suggestion; they do not edit Jira labels or links. Do not apply setup during a scheduled scan or
+   unless a current planner plan exists; the approval comment is the explicit
    authorization to apply the freshly checked setup. If the Team field cannot be
    parsed, stop and report the parser issue; never ask the user to re-enter a
    valid Team value. Set `dev-bot-coordinator:needs-plan`.
@@ -139,25 +167,26 @@ changes Jira issue links.
    Use this exact machine-readable block shape in the coordinator comment:
 
    ```coordinator-setup
-   {"repository":"insights-rbac","phase_assignments":{"phase:01":["RHCLOUD-123"]}}
+   {"phase_assignments":{"phase:01":["RHCLOUD-123"]},"ticket_repositories":{"RHCLOUD-123":"insights-rbac"},"planner_comment_id":"12345","planner_input_snapshot_hash":"<planner hash>","ticket_snapshot_hash":"<plan_snapshot_hash>"}
    ```
 
    A `Plan revision` comment uses that same block and adds the exact
    `plan_snapshot_hash` from preflight:
 
    ```coordinator-setup
-   {"repository":"insights-rbac","phase_assignments":{"phase:01":["RHCLOUD-123"]},"ticket_snapshot_hash":"<plan_snapshot_hash>"}
+   {"phase_assignments":{"phase:01":["RHCLOUD-123"]},"ticket_repositories":{"RHCLOUD-123":"insights-rbac"},"planner_comment_id":"12345","planner_input_snapshot_hash":"<planner hash>","ticket_snapshot_hash":"<plan_snapshot_hash>"}
    ```
-4. **New control comments**: when a new user comment contains `approve` or
-   `approved` anywhere in its flattened body, treat it as one authorization to
-   reread the latest Jira state, validate the setup, apply repository and phase
+4. **New control comments**: when a new first-line `COORDINATOR:` comment
+   contains `approve` or `approved` anywhere in its flattened body, treat it as
+   one authorization to reread the latest Jira state, validate the setup, apply repository and phase
    labels, and start implementation in this same cycle. Match case-insensitive
    substrings; do not require exact wording or a separate start command. Read
-   the latest plan and user feedback, then judge the complete plan and
-   acceptance criteria before writing anything. Do not rely on the preflight
-   snapshot alone. If the freshly checked plan is clear, build a complete inline
-   `repository` and `phase_assignments` proposal and call the validated
-   `approve-setup` action with the approval comment ID and that proposal. The
+   the latest planner plan and user feedback. Copy each phase and repository
+   assignment from `planner_plan`; do not redesign the technical plan. If the
+   planner assignment is current and complete, build a complete inline
+   `phase_assignments`, `ticket_repositories`, `planner_comment_id`,
+   `planner_input_snapshot_hash`, and `ticket_snapshot_hash` proposal and call
+   the validated `approve-setup` action with the approval comment ID and that proposal. The
    action rechecks Team, parent, all same-Team children, configured repos, and
    phase coverage, then applies repo and phase labels and hands off each
    currently eligible ticket in the lowest incomplete phase. Each handoff adds
@@ -173,27 +202,28 @@ changes Jira issue links.
    and comment with the specific missing information. A newer user comment
    after the approval must be processed before applying the approval.
 
-   Before applying any approval, inspect `plan_change_required` and
-   `ticket_changes`. If the check found added, removed, or changed tickets,
-   the approval predates the required Plan revision: publish the revision, set
-   `needs-plan`, save the current observed snapshot without changing the
-   approved hash, and wait for a new approval after that comment. If
+   Before applying any approval, inspect `planner_plan_current`,
+   `plan_change_required`, and `ticket_changes`. If the check found added,
+   removed, or changed tickets, the planner assignment is stale: ask for
+   `PLANNER: /coord plan`, set `needs-plan`, save the current observed snapshot
+   without changing the approved hash, and wait for a refreshed planner plan
+   and new approval. If
    `plan_approval_pending=true` and there is no newer ticket change, process a
    new approval using the published Plan revision block, with no inline
    proposal. The validated action enforces this and rejects handoff or
    activation while the control ticket remains `needs-plan`.
 
-   `/coord plan` rereads the current parent, control ticket, and every same-Team
-   implementation ticket, then publishes a fresh plan using the template above.
-   Planning does not hand off tickets or change their labels, assignees, links,
-   or sprint membership. `/coord status` gets a fresh status comment.
-   `/coord create P-1` may create one previously proposed ticket.
-   `/coord complete project` can finish the project only when all same-Team
-   implementation tickets are complete. Other comments may clarify the plan,
-   answer setup questions, correct the repo or phase proposal, or request
-   proposals. After any user correction, refresh the setup proposal before
-   asking for another approval. A subsequent approval must use the freshly
-   rechecked proposal; never apply an older one.
+   `PLANNER: /coord plan` rereads context and publishes the technical plan.
+   The coordinator consumes its assignments and handles Jira labels, approval,
+   and handoff. `COORDINATOR: /coord status` gets a fresh status comment.
+   `COORDINATOR: /coord create P-1` may create one previously proposed ticket.
+   `COORDINATOR: /coord complete project` can finish the project only when all same-Team
+   implementation tickets are complete. Other comments may request status,
+   ticket creation, or project completion. A requested technical-plan change
+   must go through `PLANNER: /coord plan`; the coordinator never edits the
+   planner's phase or repository assignments. After a refreshed planner plan,
+   publish a new label proposal and require a new approval. Never apply an
+   older proposal.
    Do not execute historical comments on the first enrollment.
 5. **Plan gate**: the first phase must exist; the path through its tickets,
    parallel work, and exit criteria must be clear. Use existing directional
@@ -237,8 +267,8 @@ changes Jira issue links.
    status repeatedly. When the current phase is complete, automatically
    advance to the next incomplete phase already covered by the approved plan
    and hand off its eligible tickets without asking for another approval. If
-   the next work has no approved phase plan, publish a plan revision and wait
-   for approval before handing it off.
+   planner assignments do not cover the next work, request
+   `PLANNER: /coord plan` and wait for a current plan and approval before handoff.
    Never mark the project complete merely because no more labeled tickets
    exist. Set `dev-bot-coordinator:complete` only after an explicit user
    confirmation that the same-Team project scope is finished and all planned implementation
@@ -247,7 +277,7 @@ changes Jira issue links.
    action on the control ticket with an ID (`P-1`, `P-2`, ...), reason, Team,
    parent, phase, repo, dependencies, and acceptance criteria. The coordinator
    creates a normal ticket only when a later new user comment explicitly uses
-   `/coord create P-<number>`. It does not edit or close implementation tickets.
+   `COORDINATOR: /coord create P-<number>`. It does not edit or close implementation tickets.
 9. After any action, provide a short update summary and the plan table, proposed
    sequence, and current-state bullets using the template above. Pass the
    update kind in `comment_type`; do not write the numbered heading yourself.
@@ -283,7 +313,7 @@ Actions and required request keys:
 | Action | Keys in addition to `action`, `control_key` |
 |---|---|
 | `set-state` | `state` |
-| `approve-setup` | `request_comment_id` (new user comment containing `approve` or `approved`); `proposal` for initial setup only; omit it for a published Plan revision |
+| `approve-setup` | `request_comment_id` (new `COORDINATOR:` comment containing `approve` or `approved`); `proposal` copied from current planner assignments; omit it for a published Plan revision |
 | `handoff` | `ticket_key`, `repos` (list of repo names), `approved_plan_snapshot_hash` |
 | `label-review-prs` | `ticket_key` (implementation ticket with the bot label) |
 | `create-ticket` | `request_comment_id`, `proposal_id`, `phase`, `summary`, `description` |
