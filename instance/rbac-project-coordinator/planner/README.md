@@ -2,8 +2,8 @@
 
 The planner uses GPT-6.1 Terra to write a technical plan for one unassigned
 Jira ticket labeled `dev-bot-planner` per scheduled cycle. It has its own
-OpenCode persona, preflight, and planning skill. Deploy it alongside the
-coordinator using the same runner image and a separate profile.
+OpenCode persona, preflight, and planning skill. The existing coordinator
+deployment hosts both Jira workflows.
 
 ## Jira setup
 
@@ -26,6 +26,10 @@ a revised plan. Changes to the docs base or default glob also trigger a new
 plan. Changes to source files alone do not trigger a cycle. If a missing source
 becomes available at the same path, update the request description to ask the
 planner to reconsider it.
+
+The Jira key identifies the ticket to read and comment on. The planner
+generates a request ID from the inputs above to identify a revision. Users
+only need to label the ticket.
 
 ## Project documentation
 
@@ -68,22 +72,16 @@ Links in the context point to the fetched commits.
 
 ## Deployment
 
-Use `deploy/template.yaml` or `deploy/rbac-config-template.yaml` in the
-deployment target. Set a distinct `BOT_NAME` and `BOT_INSTANCE_ID` and supply
-the same Git and Jira connector access as the other Fabric Access profiles.
+Set the planner parameters on the existing
+`fabric-access-ai-coordinator-deploy.yml` target in app-interface. The target
+continues to use the coordinator profile at `instance/rbac-project-coordinator`.
 
 | Parameter | Value |
 |---|---|
-| `BOT_CONFIG_REPO` | The Fabric Access bot config repository |
-| `BOT_CONFIG_PATH` | `instance/rbac-project-coordinator/planner` |
-| `BOT_LABEL` | `dev-bot-planner` |
-| `BOT_JIRA_PROJECT` | `RHCLOUD` or the target Jira project |
-| `BOT_EXECUTION_ENGINE` | `coordinator`, the runner engine that hosts OpenCode |
-| `REHOR_OPENCODE_DEPLOYMENT_CONFIG` | `/home/botuser/app/instance/rbac-project-coordinator/opencode-deployment.json`, which contains the Terra provider configuration |
 | `BOT_PLANNER_DOCS_BASE_URL` | Trusted HTTPS repository or directory URL |
 | `BOT_PLANNER_DOCS_GLOB` | Default directory filter, `*.md` |
 
 The Jira connector needs permission to search and read requests and comment on
-them. Use one active planner replica for a Jira project. The runner starts a
-planner session only when preflight selects a request. The planner rechecks
+them. When planner preflight selects work, the coordinator runner delegates
+the technical plan to the Terra planner persona. The runner rechecks planner
 eligibility and input freshness before posting.

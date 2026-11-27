@@ -23,6 +23,7 @@ JQL_VALUE_RE = re.compile(r"^[A-Za-z0-9:_-]+$")
 COMPLETE_STATUSES = frozenset({"done", "closed", "resolved", "release pending"})
 START_STATUSES = frozenset({"new", "backlog", "refinement", "to do"})
 UNASSIGNED_MARKERS = frozenset({"", "unassigned", "unassigned user"})
+PLANNER_LABEL = "dev-bot-planner"
 COORD_STATES = frozenset(
     {
         "dev-bot-coordinator:needs-plan",
@@ -132,6 +133,18 @@ def team_id(issue: dict, field_id: str) -> str:
 
 def labels(issue: dict) -> list[str]:
     return list(value(issue, "labels") or [])
+
+
+def implementation_children(siblings: list[dict], control: dict, field_id: str) -> list[dict]:
+    control_team = team_id(control, field_id)
+    if not control_team:
+        return []
+    return [
+        issue for issue in siblings
+        if key_of(issue) != key_of(control)
+        and team_id(issue, field_id) == control_team
+        and PLANNER_LABEL not in labels(issue)
+    ]
 
 
 def parent_key(issue: dict) -> str:
@@ -681,21 +694,8 @@ def main() -> None:
                 continue
             parent_issue = get_issue(parent)
             siblings = search_all(f'parent = "{parent}" ORDER BY key ASC')
-            children = [
-                issue
-                for issue in siblings
-                if control_team_id
-                and key_of(issue) != control_key
-                and team_id(issue, team_field_id) == control_team_id
-            ]
-            other_controls = [
-                issue
-                for issue in siblings
-                if control_team_id
-                and key_of(issue) != control_key
-                and control_label in labels(issue)
-                and team_id(issue, team_field_id) == control_team_id
-            ]
+            children = implementation_children(siblings, control, team_field_id)
+            other_controls = [issue for issue in children if control_label in labels(issue)]
             assessment = evaluate(control, children, repo_names, implementation_label)
             if not control_team_id:
                 assessment["gaps"].append("Control ticket has no Jira Team ID")

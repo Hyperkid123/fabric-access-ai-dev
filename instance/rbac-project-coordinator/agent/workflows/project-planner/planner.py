@@ -236,7 +236,9 @@ def preflight() -> None:
                 handoff = request_file(key, request_id)
                 handoff.parent.mkdir(parents=True, exist_ok=True)
                 handoff.write_text(json.dumps(asdict(settings)), encoding="utf-8")
-                output_result("start", json.dumps({"issue_key": key, "request_id": request_id}))
+                output_result("start", json.dumps({
+                    "workflow": "project-planner", "issue_key": key, "request_id": request_id,
+                }))
                 return
         output_result("skip", f"No new unassigned Jira requests labeled {LABEL}")
     except (RuntimeError, ValueError) as exc:

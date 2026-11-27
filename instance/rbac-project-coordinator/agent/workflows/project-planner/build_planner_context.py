@@ -12,7 +12,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
-REVIEW_AGENT = Path(__file__).resolve().parents[5] / "rbac-config-review" / "agent"
+REVIEW_AGENT = Path(__file__).resolve().parents[4] / "rbac-config-review" / "agent"
 sys.path.insert(0, str(REVIEW_AGENT / "workflows" / "review-only"))
 from build_context import ContextError, fetch_doc, update_related_repo  # noqa: E402
 from review_config import github_repo_url, load_config  # noqa: E402

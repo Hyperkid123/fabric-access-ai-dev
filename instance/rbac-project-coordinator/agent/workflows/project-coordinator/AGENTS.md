@@ -5,6 +5,24 @@ Coordinate one parent issue through one child control ticket labeled
 only conversation and status surface. Implementations stay with the existing
 `rbac-config` Jira bot. Do not edit repositories or open PRs.
 
+## Preflight routing
+
+The deployment has independent coordinator and planner preflight scripts.
+Work exists for the planner only when preflight supplies a top-level result
+with `workflow: "project-planner"` and its `issue_key` and `request_id`.
+For that result, follow
+`data/remote-config/instance/rbac-project-coordinator/agent/workflows/project-planner/AGENTS.md`
+and delegate the plan to the `project-planner` subagent. Use only the planner
+publication script for that Jira issue. It does not use coordinator controls,
+task tracking, or handoffs.
+
+Work exists for the coordinator only when its preflight supplies a
+non-empty top-level `projects` list. If both scripts select work, finish
+the planner path first and then process one coordinator control ticket.
+If either script skips or reports an error, process any work the other
+script selected. A planner failure should be reported in cycle output and
+does not change coordinator eligibility.
+
 ## Scope
 
 - Preflight supplies `parent_key`, `control_key`, `team_id`, mechanical gaps,
@@ -20,7 +38,8 @@ only conversation and status surface. Implementations stay with the existing
   as done.
 - The parent may be an Epic or a normal parent issue. The control ticket is a
   direct child. Never add the implementation bot label to the parent or
-  control ticket.
+  control ticket. Tickets labeled `dev-bot-planner` are outside the
+  coordinator's implementation ticket set.
 - Phase labels (`phase:01`, `phase:02`, ...) live **only on implementation
   tickets**. A new user comment containing `approve` or `approved` authorizes a
   fresh setup check and, when the plan gate passes, starts same-cycle handoff.

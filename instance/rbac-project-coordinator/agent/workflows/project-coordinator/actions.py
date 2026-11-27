@@ -26,11 +26,13 @@ from project_coordinator import (  # noqa: E402
     JQL_VALUE_RE,
     OWN_COMMENT_PREFIX,
     PHASE_RE,
+    PLANNER_LABEL,
     START_STATUSES,
     comments,
     comment_body,
     evaluate,
     get_issue,
+    implementation_children,
     is_own_comment,
     key_of,
     labels,
@@ -105,6 +107,8 @@ def checked_child(control: dict, ticket_key: str, team_field_id: str) -> dict:
         raise ValueError("Ticket Team ID differs from control Team ID")
     if ticket_key == key_of(control):
         raise ValueError("Control ticket cannot be an implementation ticket")
+    if PLANNER_LABEL in labels(child):
+        raise ValueError("Planner request cannot be an implementation ticket")
     return child
 
 
@@ -224,11 +228,7 @@ def fresh_assessment(control: dict, config: tuple[str, str, str]) -> tuple[list[
         raise ValueError("Control ticket has no Jira Team ID")
     parent = parent_key(control)
     siblings = search_all(f'parent = "{parent}" ORDER BY key ASC')
-    children = [
-        issue
-        for issue in siblings
-        if key_of(issue) != key_of(control) and team_id(issue, team_field_id) == control_team_id
-    ]
+    children = implementation_children(siblings, control, team_field_id)
     other_controls = [issue for issue in children if os.environ["BOT_LABEL"] in labels(issue)]
     assessment = evaluate(
         control,
@@ -542,11 +542,7 @@ def approve_setup(request: dict, config: tuple[str, str, str]) -> dict:
         raise ValueError("Setup proposal must assign at least one phase:01 ticket")
     parent = parent_key(control)
     siblings = search_all(f'parent = "{parent}" ORDER BY key ASC')
-    control_team = team_id(control, team_field_id)
-    children = [
-        item for item in siblings
-        if key_of(item) != key_of(control) and team_id(item, team_field_id) == control_team
-    ]
+    children = implementation_children(siblings, control, team_field_id)
     control_label = config[0]
     if any(control_label in labels(item) for item in children):
         raise ValueError("Parent has multiple same-Team control tickets")
