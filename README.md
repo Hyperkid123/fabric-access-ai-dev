@@ -20,7 +20,8 @@ fabric-access-ai-dev/
 │   │       ├── mcp.json
 │   │       └── personas/
 │   ├── rbac-config-konflux/      # Konflux PR-squash instance
-│   ├── rbac-project-coordinator/ # Jira parent/control-ticket coordinator
+│   ├── rbac-project-coordinator/ # Jira project coordinator and planner profiles
+│   │   └── planner/             # Separate technical planner for dev-bot-planner
 │   ├── rbac-config-pr-label/     # GitHub PR-label instance (label: dev-bot)
 │   │   └── agent/
 │   │       ├── instance.yaml        # workflow: ./workflows/pr-label
@@ -214,6 +215,13 @@ suggestions are generated from the current ticket statuses, plan gaps, approval
 requests, and handoff prerequisites; it never asks users to assign tickets to
 sprints. When no user action is needed, the footer points to the next scheduled
 scan.
+
+## Jira project planner
+
+The Terra planner turns an unassigned Jira request labeled `dev-bot-planner`
+into a technical plan on that ticket. It runs alongside the coordinator as a
+separate profile with its own scheduled preflight. See the
+[planner setup and project documentation guide](instance/rbac-project-coordinator/planner/README.md).
 
 ## Build
 
