@@ -53,6 +53,10 @@ def plain_text(value: object) -> str:
         return value.get("text") or ""
     if kind == "hardBreak":
         return "\n"
+    if kind in {"inlineCard", "blockCard"}:
+        attrs = value.get("attrs")
+        url = attrs.get("url") if isinstance(attrs, dict) else None
+        return url if isinstance(url, str) else ""
     inner = "".join(plain_text(node) for node in value.get("content") or [])
     return inner + "\n" if kind in {"paragraph", "heading", "codeBlock", "listItem"} else inner
 
@@ -105,9 +109,9 @@ def call(tool: str, args: dict) -> dict:
     return result
 
 
-def get_issue(key: str, *, comments: bool = False) -> dict:
+def get_issue(key: str, *, comments: bool = False, fields: str = "*all") -> dict:
     issue = call("jira_get_issue", {
-        "issue_key": key, "fields": "*all", "comment_limit": COMMENT_LIMIT if comments else 0,
+        "issue_key": key, "fields": fields, "comment_limit": COMMENT_LIMIT if comments else 0,
     })
     if issue_key(issue) != key:
         raise RuntimeError(f"Jira response did not contain issue {key}")
@@ -172,6 +176,11 @@ def issue_context(issue: dict) -> dict:
             if isinstance(label, str) and label.startswith("repo:")
         }),
     }
+
+
+def load_jira_document(key: str) -> dict:
+    issue = get_issue(key, fields="summary,description")
+    return {**issue_context(issue), "url": issue.get("url")}
 
 
 def snapshot(issue: dict, settings: Settings, cache: dict[str, dict]) -> dict | None:
@@ -287,7 +296,9 @@ def main() -> None:
         if args.action == "build":
             from build_planner_context import build_context
 
-            result = build_context(current_request(args.issue_key, args.request_id))
+            result = build_context(
+                current_request(args.issue_key, args.request_id), load_jira_document=load_jira_document,
+            )
         else:
             result = publish(args.manifest)
         print(json.dumps(result))

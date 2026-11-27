@@ -23,7 +23,7 @@ deployment hosts both Jira workflows.
 The preflight skips a request after a plan has been published for its current
 inputs. Edit the ticket or Epic description, summary, or repo labels to request
 a revised plan. Changes to the docs base or default glob also trigger a new
-plan. Changes to source files alone do not trigger a cycle. If a missing source
+plan. Changes to referenced Jira issues or Git files alone do not trigger a cycle. If a missing source
 becomes available at the same path, update the request description to ask the
 planner to reconsider it.
 
@@ -33,17 +33,29 @@ only need to label the ticket.
 
 ## Project documentation
 
-Add a line to the Epic description, with an optional directory filter on a
-separate line:
+Add `Project documentation:` to the planner ticket or its Epic. Each
+line can name a Git path, a Jira issue key, or a Jira issue URL. A Jira Epic
+works the same way as any Jira issue. For example:
 
 ```text
 Project documentation: 'project_2'
 Project documentation filter: 'design/*.md'
+Project documentation: 'RHCLOUD-12345'
+Project documentation: 'https://jira.example.com/browse/RHCLOUD-67890'
 ```
 
+The planner reads the Jira sources using its configured Jira connector and
+includes each referenced issue's summary and description. Jira references
+work without a Git base URL. Put the key or link on the same line as the
+declaration. The planner reports missing or empty Jira sources under
+**Context gaps**.
+
 `project_2` is a path relative to `BOT_PLANNER_DOCS_BASE_URL`. Use a directory
-or a direct file path such as `project_2/architecture.md`. The planner reads
-directories recursively. A filter matches paths relative to the requested
+or a direct file path such as `project_2/architecture.md`. The planner accepts
+one Git path and multiple Jira references. It uses the Epic's Git path first
+if both descriptions specify one. Put an optional filter in the same
+description as the Git path. The planner reads directories recursively.
+A filter matches paths relative to the requested
 directory. For example, `*.md` includes Markdown files at any depth and
 `design/*.md` selects Markdown files beneath `design/`. A direct file
 only needs to be valid UTF-8 text.
