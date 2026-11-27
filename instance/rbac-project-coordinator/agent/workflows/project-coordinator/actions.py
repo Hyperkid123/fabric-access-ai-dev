@@ -52,12 +52,22 @@ ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 LABEL_RE = re.compile(r"^[A-Za-z0-9:_-]+$")
 SETUP_PROPOSAL_RE = re.compile(r"```(?:[A-Za-z0-9_-]+)?\s*(.*?)\s*```", re.DOTALL)
 SETUP_APPROVAL_RE = re.compile(r"approv(?:e|ed)", re.IGNORECASE)
+CREATE_SELECTOR_RE = re.compile(
+    r"COORDINATOR:\s*/coord\s+create\s+(plan|phase:\d{2}|P-\d+(?:,P-\d+)*)",
+    re.IGNORECASE,
+)
+TICKET_PROPOSALS_RE = re.compile(
+    r"```coordinator-ticket-proposals\s*(.*?)\s*```", re.IGNORECASE | re.DOTALL,
+)
 COMMAND_HELP_FOOTER = """---
 **Actions:**
 - `COORDINATOR: approve` — approve the latest coordinator label proposal, then apply repository and phase labels and hand off eligible tickets. Added/removed tickets or changed plan inputs require a refreshed planner plan and new approval.
 - `PLANNER: /coord plan` — draft or refresh the technical plan from project documentation and selected repository context. Add optional focus after the command.
 - `COORDINATOR: /coord status` — request a fresh project status.
-- `COORDINATOR: /coord create P-<number>` — create a ticket proposed in an earlier coordinator comment.
+- `COORDINATOR: /coord create plan` — create all proposed tickets for work without existing Jira keys.
+- `COORDINATOR: /coord create phase:01` — create proposed tickets for one phase.
+- `COORDINATOR: /coord create P-1,P-3` — create selected proposed tickets.
+- Use ticket-creation requests only after the coordinator publishes a proposal list.
 - `COORDINATOR: /coord complete project` — confirm project completion after all planned tickets are complete.
 
 Start every control-ticket request with `PLANNER:` or `COORDINATOR:` on its first line."""
@@ -710,8 +720,14 @@ def approve_setup(request: dict, config: tuple[str, str, str]) -> dict:
     }
 
 
-def creation_fields(control: dict, team_field_id: str, extra_labels: list[str]) -> tuple[str, dict]:
-    parent = get_issue(parent_key(control))
+def creation_fields(
+    control: dict,
+    team_field_id: str,
+    extra_labels: list[str],
+    *,
+    parent_issue: dict | None = None,
+) -> tuple[str, dict]:
+    parent = parent_issue if parent_issue is not None else get_issue(parent_key(control))
     issue_type = value(parent, "issuetype") or value(parent, "issue_type") or {}
     if isinstance(issue_type, dict):
         type_name = str(issue_type.get("name") or "").lower()
@@ -733,35 +749,181 @@ def creation_fields(control: dict, team_field_id: str, extra_labels: list[str]) 
     return child_type, {**hierarchy, team_field_id: team_value, "labels": extra_labels}
 
 
-def create_ticket(request: dict, config: tuple[str, str, str]) -> dict:
-    control = checked_control(request["control_key"], config)
-    _, team_field_id, implementation_label = config
-    comment_id = str(request.get("request_comment_id") or "")
-    if not comment_id:
-        raise ValueError("request_comment_id is required")
-    command = request_comment(control, comment_id, r"^\s*COORDINATOR:\s*/coord\s+create\s+P-\d+\b")
-    summary = str(request.get("summary") or "").strip()
-    description = str(request.get("description") or "").strip()
-    if not summary or not description:
-        raise ValueError("Summary and description are required")
-    proposal_id = str(request.get("proposal_id") or "")
-    if not re.fullmatch(r"P-\d+", proposal_id) or not re.search(rf"^\s*COORDINATOR:\s*/coord\s+create\s+{proposal_id}\b", comment_body(command), re.IGNORECASE):
-        raise ValueError("Creation request must name an existing proposal ID")
-    if not any(
-        is_own_comment(item) and proposal_id in comment_body(item)
-        for item in comments(control)
+def create_selection(control: dict, request_comment_id: str, config: tuple[str, str, str]) -> tuple[list[dict], str, str, bool]:
+    """Validate a create selector and resolve it to the latest published ticket proposals."""
+    items = comments(control)
+    command = request_comment(
+        control,
+        request_comment_id,
+        r"^\s*COORDINATOR:\s*/coord\s+create\b",
+        requirement="an explicit user request with a ticket creation selection",
+    )
+    request_index = next(
+        index for index, item in enumerate(items)
+        if str(item.get("id") or "") == request_comment_id
+    )
+    first_line = comment_body(command).strip().splitlines()[0].strip()
+    match = CREATE_SELECTOR_RE.fullmatch(first_line)
+    if not match:
+        raise ValueError("Use `COORDINATOR: /coord create plan`, `phase:NN`, or comma-separated P-IDs")
+    selector = match[1].casefold()
+    if any(
+        is_coordination_feedback(item) or planner_focus(item) is not None
+        for item in items[request_index + 1:]
     ):
-        raise ValueError("Proposal ID was not found in a coordinator comment")
-    phase = str(request.get("phase") or "")
-    if not re.fullmatch(r"\d{2}", phase):
-        raise ValueError("Implementation ticket phase must be two digits")
-    issue_labels = [f"phase:{phase}"]
-    marker = f"Coordinator request: {key_of(control)}#{comment_id}"
-    siblings = search_all(f'parent = "{parent_key(control)}" ORDER BY key ASC')
+        raise ValueError("A newer coordinator request exists; process the latest comment")
+
+    source_index = None
+    source = None
+    payload = None
+    for index in range(request_index - 1, -1, -1):
+        if not is_own_comment(items[index]):
+            continue
+        block = TICKET_PROPOSALS_RE.search(comment_body(items[index]))
+        if not block:
+            continue
+        try:
+            payload = json.loads(block[1])
+        except json.JSONDecodeError as error:
+            raise ValueError("Coordinator ticket proposals are invalid JSON") from error
+        source_index, source = index, items[index]
+        break
+
+    if source is None:
+        if selector.startswith("p-"):
+            proposal_ids = selector.upper().split(",")
+            if len(proposal_ids) != 1 or not re.fullmatch(r"P-\d+", proposal_ids[0]):
+                raise ValueError("A proposal list requires a coordinator-ticket-proposals block")
+            return [], proposal_ids[0], request_comment_id, True
+        raise ValueError("No structured ticket proposal list exists before this request")
+    if any(
+        is_coordination_feedback(item) or planner_focus(item) is not None
+        for item in items[source_index + 1:request_index]
+    ):
+        raise ValueError("Ticket proposals are stale after intervening user feedback or a planner refresh request")
+    if not isinstance(payload, dict) or not isinstance(payload.get("proposals"), list):
+        raise ValueError("Coordinator ticket proposal block must contain a proposals list")
+
+    children, _ = fresh_assessment(control, config)
+    planner_plan = current_planner_plan(control, children, config[1], set(load_project_repos()))
+    if not planner_plan["current"]:
+        raise ValueError("A current PLANNER plan is required before creating proposed tickets")
+    if (
+        str(payload.get("planner_comment_id") or "") != str(planner_plan["comment_id"] or "")
+        or payload.get("planner_input_snapshot_hash") != planner_plan["input_snapshot_hash"]
+        or payload.get("ticket_snapshot_hash") != planner_plan["current_snapshot_hash"]
+    ):
+        raise ValueError("Ticket proposals do not match the latest current PLANNER plan")
+
+    proposals = payload["proposals"]
+    if len(proposals) > 100:
+        raise ValueError("At most 100 proposed tickets can be created from one plan")
+    by_id = {}
+    for proposal in proposals:
+        if not isinstance(proposal, dict):
+            raise ValueError("Each ticket proposal must be an object")
+        proposal_id = str(proposal.get("id") or "").upper()
+        if not re.fullmatch(r"P-\d+", proposal_id) or proposal_id in by_id:
+            raise ValueError("Ticket proposal IDs must be unique P-<number> values")
+        summary_value = proposal.get("summary")
+        description_value = proposal.get("description")
+        phase_value = proposal.get("phase")
+        repository_value = proposal.get("repository")
+        if not all(
+            isinstance(item, str)
+            for item in (summary_value, description_value, phase_value, repository_value)
+        ):
+            raise ValueError(f"{proposal_id} must use text values for summary, description, phase, and repository")
+        summary = summary_value.strip()
+        description = description_value.strip()
+        phase = phase_value.strip()
+        repository = repository_value.strip()
+        if not summary or len(summary) > 255 or not description or len(description) > 24000:
+            raise ValueError(f"{proposal_id} needs a summary and description within Jira size limits")
+        if not PHASE_RE.fullmatch(phase):
+            raise ValueError(f"{proposal_id} must use a phase:NN assignment")
+        if not repository:
+            raise ValueError(f"{proposal_id} must name a repository")
+        proposal["id"] = proposal_id
+        proposal["summary"] = summary
+        proposal["description"] = description
+        proposal["phase"] = phase
+        proposal["repository"] = repository
+        by_id[proposal_id] = proposal
+
+    if selector == "plan":
+        selected_ids = list(by_id)
+    elif selector.startswith("phase:"):
+        selected_ids = [key for key, proposal in by_id.items() if proposal["phase"].casefold() == selector]
+    else:
+        selected_ids = [item.upper() for item in selector.split(",")]
+        if len(selected_ids) != len(set(selected_ids)):
+            raise ValueError("A selected proposal ID may appear only once")
+        unknown = set(selected_ids) - set(by_id)
+        if unknown:
+            raise ValueError(f"Unknown proposal IDs: {', '.join(sorted(unknown))}")
+    if not selected_ids:
+        raise ValueError("The selected plan or phase has no proposed tickets")
+    if any(not re.fullmatch(r"P-\d+", item) for item in selected_ids):
+        raise ValueError("Selected proposal IDs must use P-<number>")
+    if len(selected_ids) > 100:
+        raise ValueError("At most 100 proposed tickets can be created from one request")
+    selected_proposals = [by_id[item] for item in selected_ids]
+    allowed_repositories = {
+        label.removeprefix("repo:") for label in labels(control)
+        if isinstance(label, str) and label.startswith("repo:")
+    }
+    for proposal in selected_proposals:
+        repository = proposal["repository"]
+        if repository not in allowed_repositories or repository not in load_project_repos():
+            raise ValueError(f"{proposal['id']} repository {repository} is not allowed on the control ticket")
+        repository_handoff_labels([repository], config[2])
+    source_comment_id = str(source.get("id") or "")
+    if not re.fullmatch(r"[1-9][0-9]*", source_comment_id):
+        raise ValueError("Coordinator proposal comment has no valid Jira comment ID")
+    return selected_proposals, source_comment_id, request_comment_id, False
+
+
+def create_from_proposal(
+    control: dict,
+    proposal: dict,
+    source_comment_id: str,
+    request_comment_id: str,
+    config: tuple[str, str, str],
+    *,
+    siblings: list[dict],
+    parent_issue: dict,
+) -> dict:
+    _, team_field_id, implementation_label = config
+    proposal_id = str(proposal["id"])
+    summary = str(proposal["summary"])
+    description = str(proposal["description"])
+    phase = str(proposal["phase"])
+    repository = str(proposal.get("repository") or "")
+    issue_labels = [phase]
+    if repository:
+        allowed_repositories = {
+            label.removeprefix("repo:") for label in labels(control)
+            if isinstance(label, str) and label.startswith("repo:")
+        }
+        if repository not in allowed_repositories or repository not in load_project_repos():
+            raise ValueError(f"{proposal_id} repository {repository} is not allowed on the control ticket")
+        repository_handoff_labels([repository], implementation_label)
+        issue_labels.append(f"repo:{repository}")
+    marker = (
+        f"Coordinator proposal: {key_of(control)}#{source_comment_id} {proposal_id}"
+        if source_comment_id.isdigit()
+        else f"Coordinator request: {key_of(control)}#{request_comment_id} {proposal_id}"
+    )
     existing = [issue for issue in siblings if marker in str(value(issue, "description") or "")]
     if existing:
-        return {"ticket_key": key_of(existing[0]), "created": False, "request_comment_id": comment_id}
-    child_type, additional = creation_fields(control, team_field_id, issue_labels)
+        issue = checked_child(control, key_of(existing[0]), team_field_id)
+        if any(label not in labels(issue) for label in issue_labels):
+            raise ValueError(f"Previously created {proposal_id} is missing its phase or repository label")
+        return {"proposal_id": proposal_id, "ticket_key": key_of(issue), "created": False}
+    child_type, additional = creation_fields(
+        control, team_field_id, issue_labels, parent_issue=parent_issue,
+    )
     if implementation_label in additional["labels"]:
         raise ValueError("Proposed ticket cannot have the implementation bot label")
     project_key = key_of(control).split("-", 1)[0]
@@ -780,8 +942,90 @@ def create_ticket(request: dict, config: tuple[str, str, str]) -> dict:
         raise RuntimeError("Jira create returned no issue key; inspect parent before retry")
     child = checked_child(control, ticket_key, team_field_id)
     if implementation_label in labels(child):
-        raise RuntimeError("Created ticket unexpectedly has implementation bot label")
-    return {"ticket_key": ticket_key, "created": True, "request_comment_id": comment_id}
+        raise RuntimeError("Created ticket unexpectedly has the implementation bot label")
+    if any(label not in labels(child) for label in issue_labels):
+        raise RuntimeError("Created ticket is missing its phase or repository label")
+    return {"proposal_id": proposal_id, "ticket_key": ticket_key, "created": True}
+
+
+def create_tickets(request: dict, config: tuple[str, str, str]) -> dict:
+    control = checked_control(request["control_key"], config)
+    comment_id = str(request.get("request_comment_id") or "")
+    if not comment_id:
+        raise ValueError("request_comment_id is required")
+    proposals, source_comment_id, request_comment_id, legacy = create_selection(
+        control, comment_id, config,
+    )
+    if legacy:
+        proposal_id = source_comment_id
+        summary = str(request.get("summary") or "").strip()
+        description = str(request.get("description") or "").strip()
+        if not any(
+            is_own_comment(item) and proposal_id in comment_body(item)
+            for item in comments(control)
+        ):
+            raise ValueError("Proposal ID was not found in a coordinator comment")
+        phase = str(request.get("phase") or "")
+        if not summary or not description:
+            raise ValueError("Summary and description are required")
+        if not re.fullmatch(r"\d{2}", phase):
+            raise ValueError("Implementation ticket phase must be two digits")
+        proposals = [{
+            "id": proposal_id,
+            "summary": summary,
+            "description": description,
+            "phase": f"phase:{phase}",
+            "repository": str(request.get("repository") or ""),
+        }]
+    parent_issue = get_issue(parent_key(control))
+    creation_fields(control, config[1], [], parent_issue=parent_issue)
+    siblings = search_all(f'parent = "{parent_key(control)}" ORDER BY key ASC')
+    results = []
+    failures = []
+    for proposal in proposals:
+        try:
+            results.append(create_from_proposal(
+                control,
+                proposal,
+                source_comment_id,
+                request_comment_id,
+                config,
+                siblings=siblings,
+                parent_issue=parent_issue,
+            ))
+        except (OSError, RuntimeError, ValueError) as error:
+            failures.append({"proposal_id": proposal["id"], "error": str(error)})
+    return {
+        "control_key": key_of(control),
+        "request_comment_id": request_comment_id,
+        "tickets": results,
+        "failures": failures,
+    }
+
+
+def create_ticket(request: dict, config: tuple[str, str, str]) -> dict:
+    """Compatibility wrapper for an explicitly selected single proposal."""
+    control = checked_control(request["control_key"], config)
+    comment_id = str(request.get("request_comment_id") or "")
+    if not comment_id:
+        raise ValueError("request_comment_id is required")
+    command = request_comment(
+        control,
+        comment_id,
+        r"^\s*COORDINATOR:\s*/coord\s+create\b",
+        requirement="an explicit user request with a ticket creation selection",
+    )
+    first_line = comment_body(command).strip().splitlines()[0].strip()
+    match = CREATE_SELECTOR_RE.fullmatch(first_line)
+    if not match or not re.fullmatch(r"P-\d+", match[1], re.IGNORECASE):
+        raise ValueError("create-ticket accepts one P-ID; use create-tickets for a plan, phase, or batch")
+    result = create_tickets(request, config)
+    if result["failures"]:
+        raise ValueError(result["failures"][0]["error"])
+    if len(result["tickets"]) != 1:
+        raise ValueError("create-ticket accepts exactly one proposal; use create-tickets for a batch")
+    ticket = result["tickets"][0]
+    return {**ticket, "request_comment_id": result["request_comment_id"]}
 
 
 def comment_control(request: dict, config: tuple[str, str, str]) -> dict:
@@ -846,6 +1090,8 @@ def dispatch(request: dict) -> dict:
         return label_review_prs(request, config)
     if action == "create-ticket":
         return create_ticket(request, config)
+    if action == "create-tickets":
+        return create_tickets(request, config)
     if action == "comment":
         return comment_control(request, config)
     raise ValueError("Unknown coordinator action")

@@ -29,7 +29,11 @@ unselected repositories.
    or likely files, explicit dependencies, concrete acceptance criteria, and
    a way to verify them. Split multi-repository work into separate items with
    an explicit contract between them. Reference existing issue keys when
-   known. Keep proposed IDs distinct from real Jira tickets.
+   known. For work without an existing Jira ticket, use a stable `P-<number>`
+   proposal ID and make its summary, description, phase, repository, and
+   dependencies clear so the coordinator can offer ticket creation for the
+   full proposal set, one phase, or selected IDs. Keep proposed IDs distinct
+   from real Jira tickets.
 4. Include migration, rollout, and rollback steps when the design needs them.
    Name material unknowns and the decision or investigation that resolves
    each one. If context is unavailable, distinguish assumptions from facts

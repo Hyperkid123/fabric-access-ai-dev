@@ -189,6 +189,15 @@ def publish(manifest_path: Path) -> dict:
         body = f"PLANNER: Planner update - Technical plan for {parent}\n\n{plan}\n"
     if warnings:
         body += "**Context gaps**\n\n" + "".join(f"- {warning}\n" for warning in warnings) + "\n"
+    if manifest.get("context_available"):
+        body += (
+            "### Possible next steps\n"
+            "- Ask the coordinator to publish ticket proposals for plan work without Jira tickets.\n"
+            "- After the proposal list is published, use `COORDINATOR: /coord create plan` for all proposals without Jira keys, "
+            "`COORDINATOR: /coord create phase:01` for one phase, or "
+            "`COORDINATOR: /coord create P-1,P-3` for selected items.\n"
+            "- After ticket creation, request `PLANNER: /coord plan` again to assign the new Jira keys.\n\n"
+        )
     body += f"\n{COMMAND_HELP_FOOTER}\n\n{PLANNER_RECEIPT} {comment_id}"
     comment = call("jira_add_comment", {"issue_key": control_key, "comment": body})
     return {"status": "published", "control_key": control_key, "comment_id": comment.get("id"), "warnings": warnings}

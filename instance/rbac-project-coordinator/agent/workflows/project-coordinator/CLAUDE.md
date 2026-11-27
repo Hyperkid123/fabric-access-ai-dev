@@ -144,10 +144,11 @@ changes Jira issue links.
    its planner-assigned phase/repository, current dependencies, and parallel
    group. Do not create or change links.
    If there are no same-Team implementation tickets, do not publish a label
-   proposal. Propose the missing Jira tickets from the planner's work items as
-   `P-<number>` entries and wait for explicit `COORDINATOR: /coord create`
-   requests. Set `dev-bot-coordinator:needs-plan` and finish the cycle. After
-   ticket creation, ask for a planner refresh so assignments use real Jira keys.
+   proposal. Propose missing Jira tickets from the planner's work items as
+   `P-<number>` entries. Use the same proposal process for uncovered planner
+   work when some same-Team implementation tickets already exist. Set
+   `dev-bot-coordinator:needs-plan` and finish the cycle. After ticket
+   creation, ask for a planner refresh so assignments use real Jira keys.
    For non-empty ticket sets, comment on the control ticket using the
    plan-comment template above, listing every same-Team implementation ticket. Include rationale, gaps, and
    questions. If all planner assignments are valid, include a
@@ -216,7 +217,11 @@ changes Jira issue links.
    `PLANNER: /coord plan` rereads context and publishes the technical plan.
    The coordinator consumes its assignments and handles Jira labels, approval,
    and handoff. `COORDINATOR: /coord status` gets a fresh status comment.
-   `COORDINATOR: /coord create P-1` may create one previously proposed ticket.
+   The coordinator can create proposed tickets from the current plan after an
+   explicit request. `COORDINATOR: /coord create plan` creates all proposed
+   tickets for work without existing Jira keys. `COORDINATOR: /coord create
+   phase:01` creates proposals for one phase, and
+   `COORDINATOR: /coord create P-1,P-3` creates selected proposals.
    `COORDINATOR: /coord complete project` can finish the project only when all same-Team
    implementation tickets are complete. Other comments may request status,
    ticket creation, or project completion. A requested technical-plan change
@@ -224,6 +229,11 @@ changes Jira issue links.
    planner's phase or repository assignments. After a refreshed planner plan,
    publish a new label proposal and require a new approval. Never apply an
    older proposal.
+   For a ticket-creation request, use the latest `coordinator-ticket-proposals`
+   block and call the validated `create-tickets` action once with the request
+   comment ID. Report every created or already-existing key and any per-ticket
+   failure. Ticket creation makes the planner snapshot stale; request a
+   planner refresh before label approval or implementation handoff.
    Do not execute historical comments on the first enrollment.
 5. **Plan gate**: the first phase must exist; the path through its tickets,
    parallel work, and exit criteria must be clear. Use existing directional
@@ -273,17 +283,36 @@ changes Jira issue links.
    exist. Set `dev-bot-coordinator:complete` only after an explicit user
    confirmation that the same-Team project scope is finished and all planned implementation
    tickets are complete. Do not close the parent issue automatically.
-8. For missing normal tickets, ticket edits, or closures, **propose** the
-   action on the control ticket with an ID (`P-1`, `P-2`, ...), reason, Team,
-   parent, phase, repo, dependencies, and acceptance criteria. The coordinator
-   creates a normal ticket only when a later new user comment explicitly uses
-   `COORDINATOR: /coord create P-<number>`. It does not edit or close implementation tickets.
+8. For planned work without an existing Jira ticket, publish a proposal on the
+   control ticket with an ID (`P-1`, `P-2`, ...), summary, description, phase,
+   repository, dependencies, and acceptance criteria. Do not propose duplicate
+   tickets for work already represented by an existing Jira key. Include this
+   exact machine-readable block and bind it to the current planner output:
+
+   ```coordinator-ticket-proposals
+   {"planner_comment_id":"12345","planner_input_snapshot_hash":"<planner hash>","ticket_snapshot_hash":"<ticket snapshot hash>","proposals":[{"id":"P-1","summary":"Add project API","description":"Goal, scope, dependencies, acceptance criteria, and verification steps.","phase":"phase:01","repository":"insights-rbac"}]}
+   ```
+
+   Create only after a later user comment explicitly selects the proposed work:
+   `COORDINATOR: /coord create plan` creates all proposals for work without
+   existing Jira keys, `COORDINATOR: /coord create phase:01` creates proposals
+   for one phase, and
+   `COORDINATOR: /coord create P-1,P-3` creates only the listed proposals.
+   The validated action checks the current planner snapshot, selected IDs,
+   repository scope, Team, and parent, then creates tickets with phase and
+   repository labels. It never adds the implementation bot label. After
+   creation, request `PLANNER: /coord plan` to assign the new Jira keys before
+   label approval and implementation handoff. Do not create or change Jira
+   issue links, and do not edit or close existing implementation tickets.
 9. After any action, provide a short update summary and the plan table, proposed
    sequence, and current-state bullets using the template above. Pass the
    update kind in `comment_type`; do not write the numbered heading yourself.
    Supply one to five project-wide, context-specific suggestions in the
    `next_steps` request field. The validated comment action appends them under
    `### Possible next steps`, then adds the divider and `Actions:` command list.
+   When proposals are available, include the full-plan, per-phase, and
+   selective ticket-creation commands as next steps. After tickets are created,
+   recommend a planner refresh.
    If no user action is needed, suggest waiting for the next scheduled scan.
    Use a stable `action_id` so retries do not duplicate comments. Do not assign
    or move tickets to a sprint. Do not report a label or ticket creation until
@@ -316,7 +345,7 @@ Actions and required request keys:
 | `approve-setup` | `request_comment_id` (new `COORDINATOR:` comment containing `approve` or `approved`); `proposal` copied from current planner assignments; omit it for a published Plan revision |
 | `handoff` | `ticket_key`, `repos` (list of repo names), `approved_plan_snapshot_hash` |
 | `label-review-prs` | `ticket_key` (implementation ticket with the bot label) |
-| `create-ticket` | `request_comment_id`, `proposal_id`, `phase`, `summary`, `description` |
+| `create-tickets` | `request_comment_id` (explicit plan, phase, or P-ID selection); reads and validates `coordinator-ticket-proposals` from the latest coordinator comment |
 | `comment` | `action_id`, `comment_type`, `body`, `next_steps` (one to five single-line suggestions) |
 
 Use a different request file per action or overwrite the temporary file only

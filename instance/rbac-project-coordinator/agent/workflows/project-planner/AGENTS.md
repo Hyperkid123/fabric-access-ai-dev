@@ -37,8 +37,11 @@ implementation handoffs, branches, or PRs.
 The script checks eligibility and request freshness, validates that every
 implementation ticket has exactly one phase/repository assignment, adds
 visible context warnings, and posts a comment whose first line starts with
-`PLANNER:`. Report the result in the cycle status. Use the script's result as
-the source of truth.
+`PLANNER:`. A plan comment includes next steps for the coordinator to propose
+and create tickets for the full proposal set, a phase, or selected proposal
+IDs. The planner never creates Jira tickets; the coordinator validates the
+selection and creates the requested tickets. Report the result in the cycle
+status. Use the script's result as the source of truth.
 
 Project documentation is read from the parent when repository labels are
 present. When no repository labels are present, use documentation declared on

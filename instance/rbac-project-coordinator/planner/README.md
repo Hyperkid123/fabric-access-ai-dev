@@ -23,8 +23,32 @@ The planner answers each command comment once. Update the parent brief or
 source documentation as needed, then post a new `PLANNER: /coord plan` comment
 to request a revised technical plan. The coordinator reads the planner's
 assignments and uses them to propose and apply Jira labels; it does not create
-or refresh the technical plan. Coordinator requests start with
-`COORDINATOR:` on the first line.
+or refresh the technical plan. Work items without an existing Jira ticket are
+given `P-<number>` proposal IDs. The coordinator can create all proposed
+tickets, proposals for one phase, or selected proposal IDs after an explicit
+creation request. Coordinator requests start with `COORDINATOR:` on the first
+line.
+
+## Creating Jira tickets from the plan
+
+The coordinator lists each proposed ticket on the control ticket with its
+summary, scope, phase, repository, dependencies, and acceptance criteria. Its
+`Possible next steps` footer offers these requests:
+
+```text
+COORDINATOR: /coord create plan
+COORDINATOR: /coord create phase:01
+COORDINATOR: /coord create P-1,P-3
+```
+
+`plan` creates all proposals for work without an existing Jira key, `phase:NN`
+creates the proposals for one phase, and a comma-separated list creates only
+those IDs. The action verifies the current planner snapshot and control
+ticket scope, then sets the phase and repository labels. It does not add the
+implementation bot label. After ticket
+creation, request `PLANNER: /coord plan` so the planner can assign the real
+Jira keys; the coordinator then publishes a fresh label proposal for approval
+and handoff. Planner comments also show these creation options as next steps.
 
 ## Project documentation
 
