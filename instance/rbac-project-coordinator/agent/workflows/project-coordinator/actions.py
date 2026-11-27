@@ -26,13 +26,13 @@ from project_coordinator import (  # noqa: E402
     JQL_VALUE_RE,
     OWN_COMMENT_PREFIX,
     PHASE_RE,
-    PLANNER_LABEL,
     START_STATUSES,
     comments,
     comment_body,
     evaluate,
     get_issue,
     implementation_children,
+    is_coordination_feedback,
     is_own_comment,
     key_of,
     labels,
@@ -55,6 +55,7 @@ COMMAND_HELP_FOOTER = """---
 **Actions:**
 - A new user comment containing `approve` or `approved` — approve the latest published plan, then apply repository and phase labels and hand off eligible tickets. Added/removed tickets or changed plan inputs require a new Plan revision and approval; normal status, assignee, timestamp, and bot-label changes do not.
 - `/coord plan` — reread current Jira data and publish a fresh plan without handing off tickets.
+- `/coord planner` — draft a technical plan from the parent ticket. Add optional focus after the command.
 - `/coord status` — request a fresh project status.
 - `/coord create P-<number>` — create a ticket proposed in an earlier coordinator comment.
 - `/coord complete project` — confirm project completion after all planned tickets are complete."""
@@ -107,8 +108,6 @@ def checked_child(control: dict, ticket_key: str, team_field_id: str) -> dict:
         raise ValueError("Ticket Team ID differs from control Team ID")
     if ticket_key == key_of(control):
         raise ValueError("Control ticket cannot be an implementation ticket")
-    if PLANNER_LABEL in labels(child):
-        raise ValueError("Planner request cannot be an implementation ticket")
     return child
 
 
@@ -408,6 +407,8 @@ def request_comment(
     body = comment_body(item)
     if is_own_comment(item):
         raise ValueError("Coordinator-authored comments cannot authorize actions")
+    if not is_coordination_feedback(item):
+        raise ValueError("Planner comments cannot authorize coordinator actions")
     if not re.search(command_pattern, body, re.IGNORECASE):
         raise ValueError(f"User comment does not contain {requirement}")
     return item
@@ -436,7 +437,7 @@ def setup_proposal(
     if str(approved_comment.get("id") or "") != approval_comment_id:
         raise ValueError("Setup approval comment changed during validation")
     if any(
-        not is_own_comment(item)
+        is_coordination_feedback(item)
         for item in items[approval_index + 1:]
     ):
         raise ValueError("A newer user comment exists after this setup request; process the latest comment")
@@ -453,7 +454,7 @@ def setup_proposal(
         if not match:
             continue
         if any(
-            not is_own_comment(comment)
+            is_coordination_feedback(comment)
             for comment in items[proposal_index + 1:approval_index]
         ):
             raise ValueError("Setup proposal is stale; refresh it after the latest user feedback")

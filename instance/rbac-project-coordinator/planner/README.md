@@ -1,39 +1,31 @@
 # Jira project planner
 
-The planner uses GPT-6.1 Terra to write a technical plan for one unassigned
-Jira ticket labeled `dev-bot-planner` per scheduled cycle. It has its own
-OpenCode persona, preflight, and planning skill. The existing coordinator
-deployment hosts both Jira workflows.
+The planner uses GPT-6.1 Terra to write a technical plan when requested on a
+coordinator control ticket. The existing coordinator scan routes the request
+to the planner persona and skill.
 
 ## Jira setup
 
-1. Describe the project goal on the Epic. Label the Epic with one or more
+1. Describe the project goal on the control ticket's direct parent, which can
+   be an Epic or another supported parent issue. Label the parent with one or more
    repository keys, for example `repo:insights-rbac` and `repo:rbac-config`.
    Keys come from the [review repository list](../../rbac-config-review/agent/project-repos.json).
-2. Put the planning request in the Epic itself or in a Jira ticket under
-   the Epic. Leave the request unassigned and set `dev-bot-planner` on it.
-   If the request stands alone, add the documentation line and repo labels
-   directly to that ticket.
-3. Wait for the scheduled scan. The planner checks the ticket and Epic,
-   builds local context, then posts a technical plan on the labeled request.
+2. Post `/coord planner` on the existing coordinator control ticket.
+   Add optional focus after the command, for example
+   `/coord planner Focus on rollout and rollback`.
+3. Wait for the scheduled scan. The planner reads the parent description
+   and referenced context, then posts a technical plan on the control ticket.
    The plan includes phase goals, small or medium work items, dependencies,
-   acceptance criteria, and how to verify each item. It proposes work in
-   the comment. The Jira ticket stays unassigned.
+   acceptance criteria, and how to verify each item.
 
-The preflight skips a request after a plan has been published for its current
-inputs. Edit the ticket or Epic description, summary, or repo labels to request
-a revised plan. Changes to the docs base or default glob also trigger a new
-plan. Changes to referenced Jira issues or Git files alone do not trigger a cycle. If a missing source
-becomes available at the same path, update the request description to ask the
-planner to reconsider it.
-
-The Jira key identifies the ticket to read and comment on. The planner
-generates a request ID from the inputs above to identify a revision. Users
-only need to label the ticket.
+The planner answers each command comment once. Update the parent brief or
+source documentation as needed, then post a new `/coord planner` comment
+to request a revised technical plan. Use `/coord plan` to refresh the
+coordinator's plan for existing implementation tickets.
 
 ## Project documentation
 
-Add `Project documentation:` to the planner ticket or its Epic. Each
+Add `Project documentation:` to the parent ticket's description. Each
 line can name a Git path, a Jira issue key, or a Jira issue URL. A Jira Epic
 works the same way as any Jira issue. For example:
 
@@ -52,9 +44,8 @@ declaration. The planner reports missing or empty Jira sources under
 
 `project_2` is a path relative to `BOT_PLANNER_DOCS_BASE_URL`. Use a directory
 or a direct file path such as `project_2/architecture.md`. The planner accepts
-one Git path and multiple Jira references. It uses the Epic's Git path first
-if both descriptions specify one. Put an optional filter in the same
-description as the Git path. The planner reads directories recursively.
+one Git path and multiple Jira references. Put an optional filter in the
+parent description. The planner reads directories recursively.
 A filter matches paths relative to the requested
 directory. For example, `*.md` includes Markdown files at any depth and
 `design/*.md` selects Markdown files beneath `design/`. A direct file
@@ -93,7 +84,6 @@ continues to use the coordinator profile at `instance/rbac-project-coordinator`.
 | `BOT_PLANNER_DOCS_BASE_URL` | Trusted HTTPS repository or directory URL |
 | `BOT_PLANNER_DOCS_GLOB` | Default directory filter, `*.md` |
 
-The Jira connector needs permission to search and read requests and comment on
-them. When planner preflight selects work, the coordinator runner delegates
-the technical plan to the Terra planner persona. The runner rechecks planner
-eligibility and input freshness before posting.
+The Jira connector needs permission to read the parent and comment on the
+control ticket. The existing coordinator preflight checks control ticket
+comments. The runner rechecks the command and parent inputs before posting.

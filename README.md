@@ -108,7 +108,7 @@ coordinator run:
 3. **Prepare implementation tickets.** Make each in-scope ticket a direct
    child of the same parent with the same Team ID. Give each a clear outcome
    and acceptance criteria. Same-Team direct children are treated as project
-   work except for the control ticket and tickets labeled `dev-bot-planner`.
+   work except for the control ticket.
 4. **Approve and start the setup.** The coordinator suggests a repository and
    one phase for each implementation ticket. Correct the suggestion if needed,
    then include `approve` or `approved` in a new comment. The comment can contain
@@ -190,13 +190,15 @@ flowchart TD
 On the control ticket, users can request:
 
 ```text
+/coord plan
+/coord planner
 /coord status
 /coord create P-1
 /coord complete project
 ```
 
 To approve a setup and start implementation, include `approve` or `approved`
-anywhere in a new user comment. The entire comment need not be a command.
+in a separate new Jira comment. A planner command requests a technical plan.
 
 `/coord create P-1` applies only to a previously proposed ticket;
 `/coord complete project` requires all in-scope tickets to be complete.
@@ -216,9 +218,9 @@ scan.
 
 ## Jira project planner
 
-The Terra planner turns an unassigned Jira request labeled `dev-bot-planner`
-into a technical plan on that ticket. The coordinator deployment runs the
-planner's independent preflight and persona. See the
+Comment `/coord planner` on the coordinator control ticket to have the Terra
+planner draft a technical plan from its parent's description. The coordinator
+scan routes this request to the planner persona. See the
 [planner setup and project documentation guide](instance/rbac-project-coordinator/planner/README.md).
 
 ## Build

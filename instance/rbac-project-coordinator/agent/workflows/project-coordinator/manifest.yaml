@@ -4,7 +4,6 @@ description: Coordinate same-Team Jira work beneath a parent issue through one c
 
 preflight:
   - 01-project-state.py
-  - 02-planner-queue.py
 
 provides:
   claude_md: CLAUDE.md

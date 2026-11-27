@@ -1,16 +1,16 @@
 # Jira project planner workflow
 
-The planner writes a technical plan for one unassigned ticket labeled
-`dev-bot-planner`. Follow only the planner workflow for this request.
-Keep the ticket unassigned and use the Jira comment as the plan deliverable.
+The planner responds to an explicit `/coord planner` request on the
+coordinator control ticket. Use its direct parent's description as the
+project brief and the command's optional focus to guide the plan.
 Do not create or change Jira issues, labels, dependencies, sprints,
 implementation handoffs, branches, or PRs.
 
-1. Use the `issue_key` and `request_id` supplied by planner preflight.
+1. Use the `control_key` and `comment_id` supplied by coordinator preflight.
    Build the context using the workflow script in the synced configuration:
 
    ```sh
-   python3 data/remote-config/instance/rbac-project-coordinator/agent/workflows/project-planner/planner.py build <issue_key> <request_id>
+   python3 data/remote-config/instance/rbac-project-coordinator/agent/workflows/project-planner/planner.py build <control_key> <comment_id>
    ```
 
    The runner image also contains the workflow under
@@ -28,5 +28,5 @@ implementation handoffs, branches, or PRs.
    ```
 
    The script checks eligibility and request freshness, adds visible context
-   warnings, and posts the plan on the original Jira ticket. Report the result
+   warnings, and posts the plan on the control ticket. Report the result
    in the cycle status. Use the script's result as the source of truth.

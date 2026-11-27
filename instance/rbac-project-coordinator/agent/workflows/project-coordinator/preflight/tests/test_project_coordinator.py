@@ -53,6 +53,43 @@ def blocked_by(key: str) -> dict:
     return {"type": {"name": "Blocks", "inward": "is blocked by", "outward": "blocks"}, "inwardIssue": {"key": key}}
 
 
+def test_control_ticket_planner_command_uses_coordinator_preflight(monkeypatch, tmp_path, capsys):
+    control = issue("RHCLOUD-101", labels=[CONFIG[0]])
+    control["fields"]["assignee"] = {"displayName": "Assigned Coordinator"}
+    parent = issue("RHCLOUD-100", parent=None, description="Parent project brief")
+    before = coordinator.fingerprint(parent, control, [], TEAM_FIELD)
+    command = {"id": "504", "body": "/coord planner Describe the approved rollout"}
+    control["comments"] = [command]
+    assert coordinator.fingerprint(parent, control, [], TEAM_FIELD) == before
+
+    monkeypatch.setenv("BOT_LABEL", CONFIG[0])
+    monkeypatch.setenv("BOT_TEAM_FIELD_ID", TEAM_FIELD)
+    monkeypatch.setenv("BOT_IMPLEMENTATION_LABEL", CONFIG[2])
+    monkeypatch.setenv("BOT_PLANNER_DOCS_BASE_URL", "https://gitlab.example.com/team/docs/")
+    monkeypatch.setattr(coordinator, "PLANNER_REQUEST_DIR", tmp_path)
+    monkeypatch.setattr(coordinator, "search_all", lambda *_args: [control])
+    monkeypatch.setattr(coordinator, "get_issue", lambda key: {"RHCLOUD-101": control}[key])
+    monkeypatch.setattr(coordinator, "load_tasks", lambda: pytest.fail("Planner must not use coordinator tasks"))
+    coordinator.main()
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "start"
+    assert json.loads(output["content"]) == {
+        "planner": {"control_key": "RHCLOUD-101", "comment_id": "504", "parent_key": "RHCLOUD-100"},
+    }
+    settings = json.loads((tmp_path / "RHCLOUD-101-504.json").read_text())
+    assert settings["docs_base"] == "https://gitlab.example.com/team/docs/"
+    with pytest.raises(ValueError, match="Planner comments cannot authorize coordinator actions"):
+        actions.request_comment(control, "504", actions.SETUP_APPROVAL_RE.pattern)
+
+    control["comments"].append({"id": "505", "body": (
+        f"### {coordinator.PLANNER_HEADING} for RHCLOUD-100\n\n"
+        f"{coordinator.PLANNER_RECEIPT} 504"
+    )})
+    assert coordinator.pending_planner_request(control, CONFIG[0]) is None
+    assert coordinator.fingerprint(parent, control, [], TEAM_FIELD) == before
+    assert coordinator.planner_focus({"body": "/coord plan"}) is None
+
+
 def test_parallel_first_tickets_and_release_pending_unblock_next_phase():
     control = issue("RHCLOUD-101", labels=["dev-bot-coordinator", "repo:rbac-config"])
     first = issue("RHCLOUD-102", labels=["phase:01"], links=[relates("RHCLOUD-101")])

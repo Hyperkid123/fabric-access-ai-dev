@@ -90,41 +90,38 @@ def jira_reference(location: str) -> str | None:
 def read_project_docs(
     request: dict, directory: Path, load_jira_document: Callable[[str], dict],
 ) -> tuple[list[dict], list[str]]:
-    # Preserve the Epic's Git-path precedence and allow Jira references from
-    # both descriptions. The labeled request can also be the Epic itself.
-    sources = {item["key"]: item for item in (request["epic"], request["issue"]) if item is not None}
+    source = request["parent"]
     git_path = None
     jira_keys: dict[str, None] = {}
     warnings = []
-    for source in sources.values():
-        for match in DOC_DECLARATION.findall(source["description"]):
-            location = match.strip().strip("'\"`")
-            try:
-                key = jira_reference(location)
-                if key:
-                    jira_keys.setdefault(key, None)
-                    continue
-                relative_parts(location)
-            except ValueError:
-                warnings.append(
-                    f"Project documentation in {source['key']} must be a relative Git path, "
-                    "Jira issue key, or Jira issue URL."
-                )
+    for match in DOC_DECLARATION.findall(source["description"]):
+        location = match.strip().strip("'\"`")
+        try:
+            key = jira_reference(location)
+            if key:
+                jira_keys.setdefault(key, None)
                 continue
-            if git_path is None:
-                git_path = (source, location)
-            else:
-                warnings.append(f"Skipped additional Git documentation path `{location}` in {source['key']}.")
+            relative_parts(location)
+        except ValueError:
+            warnings.append(
+                f"Project documentation in {source['key']} must be a relative Git path, "
+                "Jira issue key, or Jira issue URL."
+            )
+            continue
+        if git_path is None:
+            git_path = location
+        else:
+            warnings.append(f"Skipped additional Git documentation path `{location}` in {source['key']}.")
 
     documents = []
     if git_path is not None:
-        git_docs, git_warnings = read_git_docs(request, *git_path, directory)
+        git_docs, git_warnings = read_git_docs(request, source, git_path, directory)
         documents.extend(git_docs)
         warnings.extend(git_warnings)
     jira_bytes = 0
     for key in list(jira_keys)[:MAX_DOC_FILES]:
         try:
-            issue = sources[key] if key in sources else load_jira_document(key)
+            issue = source if key == source["key"] else load_jira_document(key)
             description = issue["description"].strip()
             if not description:
                 warnings.append(f"Jira project documentation {key} has an empty description.")
@@ -284,14 +281,15 @@ def build_context(
     request: dict, root: Path = Path("data/planner-context"), *, load_jira_document: Callable[[str], dict],
 ) -> dict:
     root.mkdir(parents=True, exist_ok=True)
-    directory = Path(tempfile.mkdtemp(prefix=request["issue"]["key"] + "-", dir=root)).resolve()
+    directory = Path(tempfile.mkdtemp(prefix=request["control_key"] + "-", dir=root)).resolve()
     project_docs, project_warnings = read_project_docs(request, directory, load_jira_document)
-    source = request["epic"] or request["issue"]
-    repos, review_docs, repo_warnings = review_sources(source["repo_labels"], directory)
+    repos, review_docs, repo_warnings = review_sources(request["parent"]["repo_labels"], directory)
     warnings = [*request["warnings"], *project_warnings, *repo_warnings]
     manifest = {
-        "issue": request["issue"],
-        "epic": request["epic"],
+        "control_key": request["control_key"],
+        "comment_id": request["comment_id"],
+        "parent": request["parent"],
+        "focus": request["focus"],
         "request_id": request["request_id"],
         "project_documents": project_docs,
         "repo_checkouts": repos,

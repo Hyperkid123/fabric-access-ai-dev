@@ -14,6 +14,7 @@ import re
 import subprocess
 import urllib.parse
 from collections import defaultdict
+from pathlib import Path
 
 from common import INSTANCE_ID, MEMORY_URL, http_get, load_project_repos, output_result
 from jira_mcp import jira_call, jira_cleanup
@@ -23,7 +24,11 @@ JQL_VALUE_RE = re.compile(r"^[A-Za-z0-9:_-]+$")
 COMPLETE_STATUSES = frozenset({"done", "closed", "resolved", "release pending"})
 START_STATUSES = frozenset({"new", "backlog", "refinement", "to do"})
 UNASSIGNED_MARKERS = frozenset({"", "unassigned", "unassigned user"})
-PLANNER_LABEL = "dev-bot-planner"
+PLANNER_COMMAND = re.compile(r"/coord[ \t]+planner(?:\s+(.+))?", re.IGNORECASE | re.DOTALL)
+PLANNER_HEADING = "Planner update - Technical plan"
+PLANNER_RECEIPT = "Planner request comment:"
+PLANNER_REQUEST_DIR = Path("data/planner-requests")
+COMMENT_ID = re.compile(r"[1-9][0-9]*")
 COORD_STATES = frozenset(
     {
         "dev-bot-coordinator:needs-plan",
@@ -143,7 +148,6 @@ def implementation_children(siblings: list[dict], control: dict, field_id: str) 
         issue for issue in siblings
         if key_of(issue) != key_of(control)
         and team_id(issue, field_id) == control_team
-        and PLANNER_LABEL not in labels(issue)
     ]
 
 
@@ -264,6 +268,53 @@ def is_own_comment(comment: dict) -> bool:
     if heading == prefix or heading.startswith(prefix + " -"):
         return True
     return any(line.startswith("Coordinator action:") for line in lines[-2:])
+
+
+def planner_focus(comment: dict) -> str | None:
+    """An explicit planner command may include optional focus after the command."""
+    match = PLANNER_COMMAND.fullmatch(comment_body(comment).strip())
+    return (match[1] or "").strip() if match else None
+
+
+def planner_receipt(comment: dict) -> str | None:
+    lines = comment_body(comment).strip().splitlines()
+    if not lines or not lines[0].lstrip("#").strip().startswith(PLANNER_HEADING):
+        return None
+    marker = re.fullmatch(rf"{re.escape(PLANNER_RECEIPT)} ([1-9][0-9]*)", lines[-1].strip())
+    return marker[1] if marker else None
+
+
+def is_coordination_feedback(comment: dict) -> bool:
+    return not is_own_comment(comment) and planner_focus(comment) is None and planner_receipt(comment) is None
+
+
+def planner_request_path(control_key: str, comment_id: str) -> Path:
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]*-[1-9][0-9]*", control_key) or not COMMENT_ID.fullmatch(comment_id):
+        raise ValueError("Invalid control ticket key or planner comment ID")
+    return PLANNER_REQUEST_DIR / f"{control_key}-{comment_id}.json"
+
+
+def pending_planner_request(control: dict, control_label: str) -> dict | None:
+    parent = parent_key(control)
+    if not parent or control_label not in labels(control):
+        return None
+    items = comments(control)
+    handled = {planner_receipt(item) for item in items}
+    for item in items:
+        comment_id = str(item.get("id") or "")
+        if not COMMENT_ID.fullmatch(comment_id) or comment_id in handled or planner_focus(item) is None:
+            continue
+        control_key = key_of(control)
+        path = planner_request_path(control_key, comment_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "control_label": control_label,
+            "parent_key": parent,
+            "docs_base": os.getenv("BOT_PLANNER_DOCS_BASE_URL", "").strip(),
+            "docs_glob": os.getenv("BOT_PLANNER_DOCS_GLOB", "").strip() or "*.md",
+        }), encoding="utf-8")
+        return {"control_key": control_key, "comment_id": comment_id, "parent_key": parent}
+    return None
 
 
 def search_all(jql: str, requested_fields: str = "*all") -> list[dict]:
@@ -615,11 +666,11 @@ def evaluate(control: dict, children: list[dict], repo_names: set[str], implemen
 
 
 def fingerprint(parent: dict, control: dict, children: list[dict], team_field_id: str, pull_requests: dict | None = None) -> str:
-    """Ignore coordinator comments/state labels to avoid waking on own reports."""
+    """Ignore planner traffic, coordinator reports, and coordinator state labels."""
     human_comments = [
         {"id": str(comment.get("id") or ""), "body": comment_body(comment)}
         for comment in comments(control)
-        if not is_own_comment(comment)
+        if is_coordination_feedback(comment)
     ]
     payload = {
         "parent": {"key": key_of(parent), "summary": value(parent, "summary"), "description": value(parent, "description"), "status": status_name(parent)},
@@ -672,12 +723,19 @@ def main() -> None:
 
     try:
         candidates = search_all(f'project = "{project}" AND labels = "{control_label}" ORDER BY key ASC', "key,labels,parent")
+        controls = []
+        for candidate in candidates:
+            control = get_issue(key_of(candidate))
+            planner = pending_planner_request(control, control_label)
+            if planner:
+                output_result("start", json.dumps({"planner": planner}))
+                return
+            controls.append(control)
         tasks = load_tasks()
         repo_names = set(load_project_repos())
         actionable = []
-        for candidate in candidates:
-            control_key = key_of(candidate)
-            control = get_issue(control_key)
+        for control in controls:
+            control_key = key_of(control)
             control_team_id = team_id(control, team_field_id)
             parent = parent_key(control)
             if not parent:
@@ -761,7 +819,7 @@ def main() -> None:
                     "new_comments": [
                         {"id": str(comment.get("id") or ""), "body": comment_body(comment), "created": comment.get("created")}
                         for comment in comments(control)
-                        if not is_own_comment(comment)
+                        if is_coordination_feedback(comment)
                         and str(comment.get("id") or "") not in set((task.get("metadata") or {}).get("processed_comment_ids") or [])
                     ],
                     "open_pull_requests": pull_requests,
