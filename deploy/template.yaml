@@ -15,6 +15,10 @@ parameters:
   value: hcc-ai-platform-accessmanagement
 - name: BOT_JIRA_PROJECT
   value: RHCLOUD
+- name: BOT_PLANNER_DOCS_BASE_URL
+  value: ""
+- name: BOT_PLANNER_DOCS_GLOB
+  value: "*.md"
 - name: BOT_TEAM_FIELD_ID
   value: ""
 - name: BOT_TEAM_ID
@@ -121,6 +125,10 @@ objects:
             value: ${BOT_IMPLEMENTATION_LABEL}
           - name: BOT_JIRA_PROJECT
             value: ${BOT_JIRA_PROJECT}
+          - name: BOT_PLANNER_DOCS_BASE_URL
+            value: ${BOT_PLANNER_DOCS_BASE_URL}
+          - name: BOT_PLANNER_DOCS_GLOB
+            value: ${BOT_PLANNER_DOCS_GLOB}
           - name: BOT_TEAM_FIELD_ID
             value: ${BOT_TEAM_FIELD_ID}
           - name: BOT_TEAM_ID
